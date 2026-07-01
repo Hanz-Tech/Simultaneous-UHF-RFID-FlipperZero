@@ -252,8 +252,11 @@ void uhf_reader_lock_item_clicked(void* context, uint32_t index) {
             } else if(returnResponse == M100APWrong) {
                 notification_message(App->Notifications, &sequence_error);
                 break;
+            } else {
+                // Any other error response — don't hang forever
+                notification_message(App->Notifications, &sequence_error);
+                break;
             }
-            continue;
         }
         notification_message(App->Notifications, &uhf_sequence_blink_stop);
         popup_reset(App->LockPopup);

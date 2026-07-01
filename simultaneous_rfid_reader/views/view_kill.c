@@ -285,8 +285,11 @@ void uhf_reader_kill_confirm_password_updated(void* context) {
                         } else if(returnResponse == M100APWrong) {
                             notification_message(App->Notifications, &sequence_error);
                             break;
+                        } else {
+                            // Any other error response — don't hang forever
+                            notification_message(App->Notifications, &sequence_error);
+                            break;
                         }
-                        continue;
                     }
                     notification_message(App->Notifications, &uhf_sequence_blink_stop);
                     popup_reset(PopupLock);
