@@ -1,4 +1,5 @@
 #include "yrm100x_module.h"
+#include "yrm100x_worker.h"
 #include "yrm100x_module_cmd.h"
 #include "saved_epc_functions.h"
 #include <furi.h>
@@ -175,6 +176,127 @@ M100ResponseType m100_single_poll(M100Module* module, UHFTag* uhf_tag) {
     uhf_tag_set_epc_crc(uhf_tag, crc);
     uhf_tag_set_epc(uhf_tag, data + 8, epc_len);
     return M100SuccessResponse;
+}
+
+M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHFWorker* worker) {
+    UHFUart* uart = module->uart;
+    Buffer* buffer = uart->buffer;
+    M100ResponseType result = M100EmptyResponse;
+
+    // Send CMD_MULTIPLE_POLLING once to start the inventory round
+    uhf_buffer_reset(buffer);
+    uhf_uart_send_wait(
+        uart,
+        (uint8_t*)&CMD_MULTIPLE_POLLING.cmd[0],
+        CMD_MULTIPLE_POLLING.length);
+
+    // Collect one EPC notification frame per tag until stopped or list full
+    while(wrapper->tag_count < UHF_TAG_WRAPPER_MAX_TAGS) {
+        if(worker->state == UHFWorkerStateStop) {
+            FURI_LOG_I(UHF_MOD_TAG, "multi_poll: aborted by worker stop");
+            break;
+        }
+
+        // Reset buffer to receive next frame
+        uhf_buffer_reset(buffer);
+        while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
+            if(worker->state == UHFWorkerStateStop) break;
+        }
+        uhf_uart_tick_reset(uart);
+
+        uint8_t* data = uhf_buffer_get_data(buffer);
+        size_t length = uhf_buffer_get_size(buffer);
+
+        // Tick timeout — inventory round ended naturally
+        if(!length || !uhf_is_buffer_closed(buffer)) {
+            FURI_LOG_I(
+                UHF_MOD_TAG,
+                "multi_poll: no more frames, total tags=%d",
+                (int)wrapper->tag_count);
+            break;
+        }
+
+        // Validate frame structure and checksum
+        if(length < 13 || data[0] != FRAME_START || data[length - 1] != FRAME_END) {
+            FURI_LOG_W(UHF_MOD_TAG, "multi_poll: invalid frame, len=%d", (int)length);
+            continue;
+        }
+        if(checksum(data + 1, length - 3) != data[length - 2]) {
+            FURI_LOG_W(UHF_MOD_TAG, "multi_poll: frame checksum fail");
+            continue;
+        }
+
+        // Parse EPC — same layout as m100_single_poll (data[6]=PC_hi, data[7]=PC_lo)
+        uint16_t pc = data[6];
+        size_t epc_len = (pc >> 3) * 2;
+        pc = (uint16_t)((pc << 8) | data[7]);
+
+        if(length < (size_t)(8 + epc_len + 4)) {
+            FURI_LOG_W(
+                UHF_MOD_TAG,
+                "multi_poll: epc_len %d exceeds frame len %d",
+                (int)epc_len,
+                (int)length);
+            continue;
+        }
+
+        uint16_t crc =
+            (uint16_t)(((uint16_t)data[8 + epc_len] << 8) | data[8 + epc_len + 1]);
+        if(crc16_genibus(data + 6, epc_len + 2) != crc) {
+            FURI_LOG_W(UHF_MOD_TAG, "multi_poll: EPC CRC fail");
+            continue;
+        }
+
+        uint8_t* epc_data = data + 8;
+
+        // Deduplicate — skip if EPC already present in the list
+        bool duplicate = false;
+        for(size_t i = 0; i < wrapper->tag_count; i++) {
+            UHFTag* existing = wrapper->tags[i];
+            if(existing->epc != NULL && existing->epc->size == epc_len &&
+               memcmp(existing->epc->data, epc_data, epc_len) == 0) {
+                duplicate = true;
+                break;
+            }
+        }
+        if(duplicate) {
+            FURI_LOG_D(UHF_MOD_TAG, "multi_poll: duplicate EPC, skipping");
+            continue;
+        }
+
+        // Allocate new tag, populate EPC fields, add to wrapper list
+        UHFTag* new_tag = uhf_tag_alloc();
+        uhf_tag_set_epc_pc(new_tag, pc);
+        uhf_tag_set_epc_crc(new_tag, crc);
+        uhf_tag_set_epc(new_tag, epc_data, epc_len);
+
+        if(!uhf_tag_wrapper_add_tag(wrapper, new_tag)) {
+            // Guard: shouldn't happen since loop condition checks tag_count
+            FURI_LOG_W(UHF_MOD_TAG, "multi_poll: wrapper add failed");
+            uhf_tag_free(new_tag);
+            break;
+        }
+        FURI_LOG_I(UHF_MOD_TAG, "multi_poll: added unique tag %d", (int)wrapper->tag_count);
+        result = M100SuccessResponse;
+    }
+
+    // Always stop the inventory round regardless of exit path
+    uhf_buffer_reset(buffer);
+    uhf_uart_send_wait(
+        uart,
+        (uint8_t*)&CMD_STOP_MULTIPLE_POLLING.cmd[0],
+        CMD_STOP_MULTIPLE_POLLING.length);
+    // Drain the stop-ack frame
+    while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
+    }
+    uhf_uart_tick_reset(uart);
+
+    FURI_LOG_I(
+        UHF_MOD_TAG,
+        "multi_poll: done, total tags=%d, result=%d",
+        (int)wrapper->tag_count,
+        (int)result);
+    return result;
 }
 
 M100ResponseType m100_set_select(M100Module* module, UHFTag* uhf_tag) {
