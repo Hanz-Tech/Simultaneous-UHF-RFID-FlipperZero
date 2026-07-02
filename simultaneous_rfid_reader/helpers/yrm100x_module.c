@@ -190,7 +190,11 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         (uint8_t*)&CMD_MULTIPLE_POLLING.cmd[0],
         CMD_MULTIPLE_POLLING.length);
 
-    // Collect one EPC notification frame per tag until stopped or list full
+    // Collect one EPC notification frame per tag until stopped or list full.
+    // Tracks consecutive no-tag rounds; resets to 0 after each EPC frame found.
+    // 20 consecutive no-tag rounds ≈ 20-100 ms — enough to confirm the field is empty
+    // or that all tags have been collected, without busy-looping through all CNT rounds.
+    int consecutive_no_tag = 0;
     while(wrapper->tag_count < UHF_TAG_WRAPPER_MAX_TAGS) {
         if(worker->state == UHFWorkerStateStop) {
             FURI_LOG_I(UHF_MOD_TAG, "multi_poll: aborted by worker stop");
@@ -230,16 +234,24 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
             break;
         }
 
-        // §2.3.3: no-tag / CRC-error response — cmd=0xFF — signals an inventory round
-        // completed with no tag found. Break to avoid busy-looping across all CNT
-        // rounds when no tags are in the field.
+        // §2.3.3: no-tag / CRC-error response — cmd=0xFF — signals one inventory
+        // round completed with no tag found. Gen2 anti-collision is probabilistic:
+        // a tag only responds in ~25% of rounds (Q=2), so no-tag frames are normal
+        // even when tags are present. Continue collecting but break after 20
+        // consecutive no-tag rounds — that's enough to confirm the field is empty
+        // or that all unique tags have been collected.
         if(data[0] == FRAME_START && length >= 4 && data[2] == 0xFF) {
-            FURI_LOG_I(
-                UHF_MOD_TAG,
-                "multi_poll: no-tag round (cmd=0xFF), total tags=%d",
-                (int)wrapper->tag_count);
-            break;
+            consecutive_no_tag++;
+            if(consecutive_no_tag >= 20) {
+                FURI_LOG_I(
+                    UHF_MOD_TAG,
+                    "multi_poll: 20 consecutive no-tag rounds, stopping (tags=%d)",
+                    (int)wrapper->tag_count);
+                break;
+            }
+            continue;
         }
+        consecutive_no_tag = 0;
 
         // Validate frame structure and checksum
         if(length < 13 || data[0] != FRAME_START || data[length - 1] != FRAME_END) {
@@ -302,6 +314,7 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
             uhf_tag_free(new_tag);
             break;
         }
+        consecutive_no_tag = 0; // new tag found — reset the idle round counter
         FURI_LOG_I(UHF_MOD_TAG, "multi_poll: added unique tag %d", (int)wrapper->tag_count);
         result = M100SuccessResponse;
     }
