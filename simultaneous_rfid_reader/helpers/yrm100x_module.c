@@ -201,8 +201,9 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
             break;
         }
 
-        // Reset buffer to receive next frame
-        uhf_buffer_reset(buffer);
+        // NOTE: buffer is reset immediately after each frame is copied below.
+        // Do NOT add uhf_buffer_reset here — it would discard bytes the ISR has
+        // already written for the next frame while we were processing the last one.
 
         // CMD_MULTIPLE_POLLING triggers a Gen2 inventory round that takes 10-100 ms
         // before the first EPC frame arrives. A single 1000-tick window (~0.1 ms at
@@ -222,8 +223,19 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         }
         uhf_uart_tick_reset(uart);
 
-        uint8_t* data = uhf_buffer_get_data(buffer);
-        size_t length = uhf_buffer_get_size(buffer);
+        // Copy frame data to a local buffer and reset the shared buffer immediately.
+        // The UART ISR discards all bytes while buffer->closed == true. The module
+        // sends frames back-to-back at 115200 baud (~87 µs/byte), so we must reopen
+        // the ISR window before doing any heavy work (malloc, CRC, memcmp).
+        uint8_t frame[64];
+        size_t length = 0;
+        if(frame_ready) {
+            size_t raw_len = uhf_buffer_get_size(buffer);
+            length = raw_len < sizeof(frame) ? raw_len : sizeof(frame);
+            memcpy(frame, uhf_buffer_get_data(buffer), length);
+        }
+        uhf_buffer_reset(buffer); // reopen ISR window ASAP
+        uint8_t* data = frame;
 
         // All rounds exhausted without a frame — inventory round complete
         if(!frame_ready) {
