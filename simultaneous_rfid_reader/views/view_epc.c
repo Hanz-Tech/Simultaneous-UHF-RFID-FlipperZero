@@ -19,10 +19,13 @@ void uhf_reader_view_epc_draw_callback(Canvas* canvas, void* model) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 44, 11, "EPC Info:");
     canvas_set_font(canvas, FontSecondary);
     // Up-key save hint (top-left button with up-arrow icon)
     elements_button_up(canvas, "Save");
+    // RSSI in top-right corner — e.g. "Rssi:-55"
+    char RssiStr[16];
+    snprintf(RssiStr, sizeof(RssiStr), "RSSI: %d dBm", (int)MyModel->Rssi);
+    canvas_draw_str(canvas, 56, 11, RssiStr);
 
     // EPC value — wrap at 20 chars per line (120px fits 128px display)
     const char* EpcStr = furi_string_get_cstr(MyModel->Epc);
@@ -106,10 +109,17 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
             App->DeepReadDone = false;
             App->DeepReadTimerExpired = false;
 
+            // Refresh RSSI to show current value while "Reading..." is displayed
+            int8_t current_rssi = selected->epc->rssi;
+
             with_view_model(
                 App->ViewEpc,
                 UHFRFIDTagModel * model,
-                { model->IsDeepReading = true; model->DeepReadDone = false; },
+                {
+                    model->IsDeepReading = true;
+                    model->DeepReadDone = false;
+                    model->Rssi = current_rssi;
+                },
                 true);
 
             notification_message(App->Notifications, &uhf_sequence_blink_start_cyan);
@@ -313,6 +323,7 @@ void view_epc_alloc(UHFReaderApp* App) {
     ModelEpc->Pc = furi_string_alloc_set("----");
     ModelEpc->IsDeepReading = false;
     ModelEpc->DeepReadDone = false;
+    ModelEpc->Rssi = 0;
 
     view_dispatcher_add_view(App->ViewDispatcher, UHFReaderViewEpcDump, App->ViewEpc);
 }

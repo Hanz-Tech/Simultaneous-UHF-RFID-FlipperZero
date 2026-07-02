@@ -293,13 +293,16 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         }
 
         uint8_t* epc_data = data + 8;
+        // RSSI is at data[5] per §2.3.2 frame layout: BB type cmd PL_MSB PL_LSB RSSI ...
+        int8_t rssi = (int8_t)data[5];
 
-        // Deduplicate — skip if EPC already present in the list
+        // Deduplicate — skip if EPC already present in the list; but update RSSI (live)
         bool duplicate = false;
         for(size_t i = 0; i < wrapper->tag_count; i++) {
             UHFTag* existing = wrapper->tags[i];
             if(existing->epc != NULL && existing->epc->size == epc_len &&
                memcmp(existing->epc->data, epc_data, epc_len) == 0) {
+                existing->epc->rssi = rssi; // live RSSI update
                 duplicate = true;
                 break;
             }
@@ -314,6 +317,7 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         uhf_tag_set_epc_pc(new_tag, pc);
         uhf_tag_set_epc_crc(new_tag, crc);
         uhf_tag_set_epc(new_tag, epc_data, epc_len);
+        new_tag->epc->rssi = rssi;
 
         if(!uhf_tag_wrapper_add_tag(wrapper, new_tag)) {
             // Guard: shouldn't happen since loop condition checks tag_count

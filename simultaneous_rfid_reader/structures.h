@@ -378,6 +378,7 @@ typedef struct {
     FuriString* User;
     FuriString* Crc;
     FuriString* Pc;
+    int8_t Rssi;  // Last RSSI reading from the YRM100 poll frame (signed dBm)
     uint32_t CurEpcIndex;
     uint32_t ScrollOffsetEpc;
     char* ScrollingTextEpc;

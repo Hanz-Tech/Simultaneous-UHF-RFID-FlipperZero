@@ -370,6 +370,8 @@ bool uhf_reader_view_read_input_callback(InputEvent* event, void* context) {
                         furi_string_set_str(model->Reserved, "---");
                         furi_string_set_str(model->Crc, TempCrc);
                         furi_string_set_str(model->Pc, TempPc);
+                        model->Rssi = tag->epc->rssi;
+                        model->DeepReadDone = false;
                     },
                     Redraw);
                 free(TempEpc);
@@ -418,6 +420,8 @@ bool uhf_reader_view_read_input_callback(InputEvent* event, void* context) {
                         furi_string_set_str(model->Reserved, "---");
                         furi_string_set_str(model->Crc, TempCrc);
                         furi_string_set_str(model->Pc, TempPc);
+                        model->Rssi = tag->epc->rssi;
+                        model->DeepReadDone = false;
                     },
                     Redraw);
                 free(TempEpc);
@@ -619,6 +623,17 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
                 furi_string_set_str(_model->Pc, TempPc);
             },
             Redraw);
+        // Also push latest RSSI into the EPC dump model for live proximity feedback
+        with_view_model(
+            App->ViewEpc,
+            UHFRFIDTagModel * _model,
+            {
+                furi_string_set_str(_model->Epc, TempEpc);
+                furi_string_set_str(_model->Crc, TempCrc);
+                furi_string_set_str(_model->Pc, TempPc);
+                _model->Rssi = latest->epc->rssi;
+            },
+            false);
         free(TempEpc);
         free(TempCrc);
         free(TempPc);
@@ -667,6 +682,7 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
                     furi_string_set_str(_model->Reserved, "---");
                     furi_string_set_str(_model->Crc, TempCrc);
                     furi_string_set_str(_model->Pc, TempPc);
+                    _model->Rssi = first->epc->rssi;
                 },
                 Redraw);
             free(TempEpc);

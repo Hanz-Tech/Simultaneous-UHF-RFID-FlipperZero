@@ -32,6 +32,7 @@ typedef struct {
     uint8_t data[EPC_MAX_BANK_SIZE]; // 2 bytes for CRC16, 2 bytes for PC, and max 14 bytes for EPC
     uint16_t pc;
     uint16_t crc;
+    int8_t rssi; // Last RSSI reading from the poll frame (signed dBm)
 } EPCMemoryBank;
 
 // TID Memory Bank
