@@ -17,7 +17,7 @@ typedef struct {
     size_t capacity;
     size_t head;
     size_t tail;
-    bool closed;
+    volatile bool closed;
 } Buffer;
 
 Buffer* uhf_buffer_alloc(size_t inital_capacity);

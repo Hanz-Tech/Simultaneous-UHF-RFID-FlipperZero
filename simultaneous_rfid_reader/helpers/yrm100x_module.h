@@ -73,7 +73,10 @@ char* m100_get_manufacturers(M100Module* module);
 
 void m100_set_baudrate(M100Module* module, uint32_t baudrate);
 bool m100_set_working_region(M100Module* module, WorkingRegion region);
+bool m100_get_transmitting_power(M100Module* module, uint16_t* power_raw);
 bool m100_set_transmitting_power(M100Module* module, uint16_t power);
+bool m100_get_query_params(M100Module* module, uint8_t* session, uint8_t* target);
+bool m100_set_query_params(M100Module* module, uint8_t session, uint8_t target);
 bool m100_set_freq_hopping(M100Module* module, bool hopping);
 bool m100_set_power(M100Module* module, uint8_t* power);
 

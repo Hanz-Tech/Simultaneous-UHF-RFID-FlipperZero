@@ -32,6 +32,22 @@ static void show_locked_notification(UHFReaderApp* App) {
     view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewLockPopup);
 }
 
+static void show_command_error_notification(UHFReaderApp* App) {
+    notification_message(App->Notifications, &sequence_error);
+
+    Popup* popup = App->LockPopup;
+    popup_reset(popup);
+    popup_set_header(popup, "Command\nFailed!", 68, 30, AlignLeft, AlignTop);
+    popup_set_icon(popup, 0, 3, &I_WarningDolphin_45x42);
+
+    popup_enable_timeout(popup);
+    popup_set_timeout(popup, 2000);
+    popup_set_context(popup, App);
+    popup_set_callback(popup, locked_popup_back_callback);
+
+    view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewLockPopup);
+}
+
 /**
  * @brief      Callback for returning to submenu.
  * @details    This function is called when user press back button.
@@ -49,8 +65,6 @@ uint32_t uhf_reader_navigation_config_submenu_callback(void* context) {
  * @param      app  The UHFReaderApp - used to allocate app variables and views.
 */
 void view_config_alloc(UHFReaderApp* App) {
-    //Allocate the power input menu
-    power_menu_alloc(App);
     ap_menu_alloc(App);
 
     //Creating the variable item list
@@ -65,8 +79,6 @@ void view_config_alloc(UHFReaderApp* App) {
     App->ReaderConnected = false;
     App->Setting1ConfigLabel = "Connection";
     App->Setting2ConfigLabel = "Power Level";
-    App->Setting2EntryText = "Enter Value In Range 0-2700";
-    App->Setting2DefaultValue = "1500";
     App->Setting3Values[0] = 1;
     App->Setting3Values[1] = 2;
     App->Setting3Names[0] = "Internal";
@@ -147,20 +159,35 @@ void view_config_alloc(UHFReaderApp* App) {
         App->ModuleSelectionItem, App->SettingModuleNames[App->SettingModuleIndex]);
 
     // Add other items and track them for locking
-    App->num_items = 5; // Adjust based on total number of lockable items
-    App->item_locks = malloc(sizeof(VariableItemLock) * 5);
+    //Setting the available sessions (S0-S3, default S2)
+    App->SettingSessionNames[0] = "S0";
+    App->SettingSessionNames[1] = "S1";
+    App->SettingSessionNames[2] = "S2";
+    App->SettingSessionNames[3] = "S3";
+    App->SettingSessionConfigLabel = "Session";
+    App->SettingSessionIndex = 2; // default S2
+
+    //Setting the available targets (A/B, default A)
+    App->SettingTargetNames[0] = "A";
+    App->SettingTargetNames[1] = "B";
+    App->SettingTargetConfigLabel = "Target";
+    App->SettingTargetIndex = 0; // default A
+
+    App->num_items = 7; // Adjust based on total number of lockable items
+    App->item_locks = malloc(sizeof(VariableItemLock) * 7);
 
     // Initialize all items as locked except module and save
     for(size_t i = 0; i < App->num_items; i++) {
         App->item_locks[i].locked = true;
     }
 
-    //Creating the default power value
-    App->Setting2PowerStr = furi_string_alloc_set(App->Setting2DefaultValue);
+    //Creating the power setting (0-27 dBm, 1 dBm steps)
+    App->SettingPowerIndex = 15; // default 15 dBm
     App->Setting2Item = variable_item_list_add(
-        App->VariableItemListConfig, App->Setting2ConfigLabel, 1, NULL, NULL);
+        App->VariableItemListConfig, App->Setting2ConfigLabel, 28, uhf_reader_power_setting_change, App);
     variable_item_list_set_enter_callback(
         App->VariableItemListConfig, uhf_reader_setting_item_clicked, App);
+    variable_item_set_current_value_index(App->Setting2Item, App->SettingPowerIndex);
     variable_item_set_current_value_text(App->Setting2Item, "LOCKED");
 
     App->BaudSelection = variable_item_list_add(
@@ -171,7 +198,7 @@ void view_config_alloc(UHFReaderApp* App) {
         App);
 
     //Default index for the baud selection option
-    App->SettingBaudIndex = 2;
+    App->SettingBaudIndex = 1;
     variable_item_set_current_value_index(App->BaudSelection, App->SettingBaudIndex);
     variable_item_set_current_value_text(App->BaudSelection, "LOCKED");
 
@@ -218,6 +245,24 @@ void view_config_alloc(UHFReaderApp* App) {
     App->Setting3Index = 0;
     variable_item_set_current_value_index(App->AntennaSelection, App->Setting3Index);
     variable_item_set_current_value_text(App->AntennaSelection, "LOCKED");
+
+    App->SessionSelection = variable_item_list_add(
+        App->VariableItemListConfig,
+        App->SettingSessionConfigLabel,
+        COUNT_OF(App->SettingSessionNames),
+        uhf_reader_session_setting_change,
+        App);
+    variable_item_set_current_value_index(App->SessionSelection, App->SettingSessionIndex);
+    variable_item_set_current_value_text(App->SessionSelection, "LOCKED");
+
+    App->TargetSelection = variable_item_list_add(
+        App->VariableItemListConfig,
+        App->SettingTargetConfigLabel,
+        COUNT_OF(App->SettingTargetNames),
+        uhf_reader_target_setting_change,
+        App);
+    variable_item_set_current_value_index(App->TargetSelection, App->SettingTargetIndex);
+    variable_item_set_current_value_text(App->TargetSelection, "LOCKED");
     //Setting previous callback
     view_set_previous_callback(
         variable_item_list_get_view(App->VariableItemListConfig),
@@ -265,15 +310,29 @@ void uhf_reader_setting_1_change(VariableItem* Item) {
         // Update UI for all items to show unlocked state
 
         //Default index for the baud selection option
-        App->SettingBaudIndex = 2;
+        App->SettingBaudIndex = 1;
         App->SettingRegionIndex = 0;
         App->Setting3Index = 0;
         variable_item_set_current_value_index(App->RegionSelection, App->SettingRegionIndex);
         variable_item_set_current_value_index(App->BaudSelection, App->SettingBaudIndex);
         variable_item_set_current_value_index(App->AntennaSelection, App->Setting3Index);
 
-        variable_item_set_current_value_text(
-            App->Setting2Item, furi_string_get_cstr(App->Setting2PowerStr));
+        if(App->UHFModuleType == YRM100X_MODULE) {
+            uint16_t power_raw = 0;
+            if(m100_get_transmitting_power(App->YRM100XWorker->module, &power_raw)) {
+                int32_t power_dbm = ((int32_t)power_raw + 50) / 100;
+                if(power_dbm < 0) power_dbm = 0;
+                if(power_dbm > 27) power_dbm = 27;
+                App->SettingPowerIndex = (uint8_t)power_dbm;
+            } else {
+                m100_set_transmitting_power(
+                    App->YRM100XWorker->module, (uint16_t)App->SettingPowerIndex * 100);
+            }
+        }
+        char power_label[8];
+        snprintf(power_label, sizeof(power_label), "%ddBm", App->SettingPowerIndex);
+        variable_item_set_current_value_index(App->Setting2Item, App->SettingPowerIndex);
+        variable_item_set_current_value_text(App->Setting2Item, power_label);
         variable_item_list_set_enter_callback(
             App->VariableItemListConfig, uhf_reader_setting_item_clicked, App);
 
@@ -290,6 +349,25 @@ void uhf_reader_setting_1_change(VariableItem* Item) {
         variable_item_set_current_value_text(
             App->AntennaSelection, App->Setting3Names[App->Setting3Index]);
 
+        if(App->UHFModuleType == YRM100X_MODULE) {
+            uint8_t session = 0, target = 0;
+            if(m100_get_query_params(App->YRM100XWorker->module, &session, &target)) {
+                App->SettingSessionIndex = session;
+                App->SettingTargetIndex = target;
+            } else {
+                m100_set_query_params(
+                    App->YRM100XWorker->module,
+                    App->SettingSessionIndex,
+                    App->SettingTargetIndex);
+            }
+        }
+        variable_item_set_current_value_index(App->SessionSelection, App->SettingSessionIndex);
+        variable_item_set_current_value_text(
+            App->SessionSelection, App->SettingSessionNames[App->SettingSessionIndex]);
+        variable_item_set_current_value_index(App->TargetSelection, App->SettingTargetIndex);
+        variable_item_set_current_value_text(
+            App->TargetSelection, App->SettingTargetNames[App->SettingTargetIndex]);
+
     } else {
         if(App->UHFModuleType != YRM100X_MODULE) {
             uart_helper_send(App->UartHelper, "D\n", 2);
@@ -304,6 +382,8 @@ void uhf_reader_setting_1_change(VariableItem* Item) {
         variable_item_set_current_value_text(App->RegionSelection, "LOCKED");
         variable_item_set_current_value_text(App->SettingApPwdItem, "LOCKED");
         variable_item_set_current_value_text(App->AntennaSelection, "LOCKED");
+        variable_item_set_current_value_text(App->SessionSelection, "LOCKED");
+        variable_item_set_current_value_text(App->TargetSelection, "LOCKED");
     }
 
     //Setting the current setting value for both the read and write screens
@@ -317,65 +397,34 @@ void uhf_reader_setting_1_change(VariableItem* Item) {
 }
 
 /**
- * @brief      Handles the power menu.
- * @details    This function handles the power value that is set from the configuration screen and sends it to the RPi Zero via UART.
- * @param      context The UHFReaderApp app - used to allocate app variables and views.
+ * @brief      Handles power level VariableItem changes (0-27 dBm).
+ * @param      Item  The VariableItem that was changed.
 */
-void uhf_reader_setting_2_text_updated(void* context) {
-    UHFReaderApp* App = (UHFReaderApp*)context;
-    bool Redraw = true;
-
-    //Changing the read screen's power value to the one set in the configuration menu
-    if(App->UHFModuleType != YRM100X_MODULE) {
-        uint32_t power_value = (uint32_t)atoi(App->TempBuffer);
-
-        // Validate power value is between 1 and 2700 inclusive
-        if(power_value >= 1 && power_value <= 2700) {
-            with_view_model(
-                App->ViewRead,
-                UHFReaderConfigModel * Model,
-                {
-                    //Send the power command to the RPi Zero
-                    uart_helper_send(App->UartHelper, "POWER\n", 6);
-
-                    //Set the current power determined by user
-                    furi_string_set(Model->Setting2Power, App->TempBuffer);
-
-                    //Send the power value to the RPi Zero
-                    uart_helper_send_string(App->UartHelper, Model->Setting2Power);
-
-                    //Update the power value in the configuration screen
-                    variable_item_set_current_value_text(
-                        App->Setting2Item, furi_string_get_cstr(Model->Setting2Power));
-                },
-                Redraw);
-        }
-    } else {
-        //Set the power of the YRM100X Here!!!!
-        uint16_t power_value = (uint16_t)atoi(App->TempBuffer);
-
-        // Validate power value is between 1 and 27 inclusive
-        if(power_value >= 1 && power_value <= 27) {
-            with_view_model(
-                App->ViewRead,
-                UHFReaderConfigModel * Model,
-                {
-                    //Set the current power determined by user
-                    furi_string_set(Model->Setting2Power, App->TempBuffer);
-
-                    //Send the power value to the YRM100X
-                    if(m100_set_transmitting_power(App->YRM100XWorker->module, power_value)) {
-                        //Update the power value in the configuration screen
-                        variable_item_set_current_value_text(
-                            App->Setting2Item, furi_string_get_cstr(Model->Setting2Power));
-                    }
-                },
-                Redraw);
+void uhf_reader_power_setting_change(VariableItem* Item) {
+    UHFReaderApp* App = variable_item_get_context(Item);
+    uint8_t Index = variable_item_get_current_value_index(Item);
+    if(App->item_locks[0].locked) {
+        show_locked_notification(App);
+        variable_item_set_current_value_index(Item, App->SettingPowerIndex);
+        char power_label[8];
+        snprintf(power_label, sizeof(power_label), "%ddBm", App->SettingPowerIndex);
+        variable_item_set_current_value_text(Item, power_label);
+        return;
+    }
+    if(App->UHFModuleType == YRM100X_MODULE) {
+        if(!m100_set_transmitting_power(App->YRM100XWorker->module, (uint16_t)Index * 100)) {
+            variable_item_set_current_value_index(Item, App->SettingPowerIndex);
+            char power_label[8];
+            snprintf(power_label, sizeof(power_label), "%ddBm", App->SettingPowerIndex);
+            variable_item_set_current_value_text(Item, power_label);
+            show_command_error_notification(App);
+            return;
         }
     }
-
-    //Switch back to the configuration view
-    view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewConfigure);
+    App->SettingPowerIndex = Index;
+    char power_label[8];
+    snprintf(power_label, sizeof(power_label), "%ddBm", Index);
+    variable_item_set_current_value_text(Item, power_label);
 }
 
 /**
@@ -636,21 +685,53 @@ void uhf_reader_region_setting_change(VariableItem* Item) {
         }
     }
 }
-/**
- * @brief      Allocates the power text screen
- * @details    Allocates the text input object for the power screen.
- * @param      app  The UHFReaderApp - used for allocating variables and text input.
-*/
-void power_menu_alloc(UHFReaderApp* App) {
-    //TODO: Add checks for reader connection and change power levels based on module used.
-    App->TextInput = text_input_alloc();
-    view_dispatcher_add_view(
-        App->ViewDispatcher, UHFReaderViewSetPower, text_input_get_view(App->TextInput));
-    App->TempBufferSize = 5;
-    App->TempBuffer = (char*)malloc(App->TempBufferSize);
+
+void uhf_reader_session_setting_change(VariableItem* Item) {
+    UHFReaderApp* App = variable_item_get_context(Item);
+    uint8_t Index = variable_item_get_current_value_index(Item);
+    if(App->item_locks[5].locked) {
+        show_locked_notification(App);
+        return;
+    }
+    if(App->UHFModuleType == YRM100X_MODULE) {
+        if(!m100_set_query_params(
+               App->YRM100XWorker->module, Index, App->SettingTargetIndex)) {
+            // Revert UI to previous value
+            variable_item_set_current_value_index(Item, App->SettingSessionIndex);
+            variable_item_set_current_value_text(
+                Item, App->SettingSessionNames[App->SettingSessionIndex]);
+            show_command_error_notification(App);
+            return;
+        }
+    }
+    App->SettingSessionIndex = Index;
+    variable_item_set_current_value_text(Item, App->SettingSessionNames[Index]);
+}
+
+void uhf_reader_target_setting_change(VariableItem* Item) {
+    UHFReaderApp* App = variable_item_get_context(Item);
+    uint8_t Index = variable_item_get_current_value_index(Item);
+    if(App->item_locks[6].locked) {
+        show_locked_notification(App);
+        return;
+    }
+    if(App->UHFModuleType == YRM100X_MODULE) {
+        if(!m100_set_query_params(
+               App->YRM100XWorker->module, App->SettingSessionIndex, Index)) {
+            // Revert UI to previous value
+            variable_item_set_current_value_index(Item, App->SettingTargetIndex);
+            variable_item_set_current_value_text(
+                Item, App->SettingTargetNames[App->SettingTargetIndex]);
+            show_command_error_notification(App);
+            return;
+        }
+    }
+    App->SettingTargetIndex = Index;
+    variable_item_set_current_value_text(Item, App->SettingTargetNames[Index]);
 }
 
 /**
+
  * @brief      Allocates the AP text screen
  * @details    Allocates the text input object for the AP screen.
  * @param      app  The UHFReaderApp - used for allocating variables and text input.
@@ -671,51 +752,7 @@ void ap_menu_alloc(UHFReaderApp* App) {
 void uhf_reader_setting_item_clicked(void* context, uint32_t index) {
     UHFReaderApp* App = (UHFReaderApp*)context;
     index++;
-    //Check if the power menu is being selected
-    if(index == 3) {
-        if(App->item_locks[0].locked) {
-            show_locked_notification(App);
-            return;
-        }
-        // Header to display on the power value input screen.
-        text_input_set_header_text(App->TextInput, App->Setting2EntryText);
-
-        //Modify the value of the power for the read and write models
-        bool Redraw = false;
-        with_view_model(
-            App->ViewRead,
-            UHFReaderConfigModel * Model,
-            {
-                strncpy(
-                    App->TempBuffer,
-                    furi_string_get_cstr(Model->Setting2Power),
-                    App->TempBufferSize);
-            },
-            Redraw);
-        with_view_model(
-            App->ViewWrite,
-            UHFReaderWriteModel * Model,
-            {
-                strncpy(
-                    App->TempBuffer,
-                    furi_string_get_cstr(Model->Setting2Power),
-                    App->TempBufferSize);
-            },
-            Redraw);
-
-        //Setting the power text input callback function
-        bool ClearPreviousText = false;
-        text_input_set_result_callback(
-            App->TextInput,
-            uhf_reader_setting_2_text_updated,
-            App,
-            App->TempBuffer,
-            App->TempBufferSize,
-            ClearPreviousText);
-        view_set_previous_callback(
-            text_input_get_view(App->TextInput), uhf_reader_navigation_configure_callback);
-        view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewSetPower);
-    } else if(index == 6) {
+    if(index == 6) {
         // Header to display on the AP value input screen.
         if(App->item_locks[3].locked) {
             show_locked_notification(App);
@@ -756,9 +793,6 @@ void uhf_reader_setting_item_clicked(void* context, uint32_t index) {
  * @param      app  The UHFReaderApp - used for freeing variables and text input.
 */
 void view_config_free(UHFReaderApp* App) {
-    view_dispatcher_remove_view(App->ViewDispatcher, UHFReaderViewSetPower);
-    text_input_free(App->TextInput);
-    free(App->TempBuffer);
     view_dispatcher_remove_view(App->ViewDispatcher, UHFReaderViewSetReadAp);
     byte_input_free(App->ApInput);
     free(App->ApTempBuffer);

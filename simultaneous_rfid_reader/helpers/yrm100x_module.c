@@ -20,6 +20,13 @@ static M100ResponseType setup_and_send_rx(M100Module* module, uint8_t* cmd, size
     Buffer* buffer = uart->buffer;
     // clear buffer
     uhf_buffer_reset(buffer);
+
+    // Log TX bytes
+    FuriString* tx_log = furi_string_alloc();
+    for(size_t i = 0; i < cmd_length; i++) furi_string_cat_printf(tx_log, "%02X ", cmd[i]);
+    FURI_LOG_D(UHF_MOD_TAG, "TX [%d]: %s", (int)cmd_length, furi_string_get_cstr(tx_log));
+    furi_string_free(tx_log);
+
     // send cmd
     uhf_uart_send_wait(uart, cmd, cmd_length);
     // wait for response by polling
@@ -32,6 +39,18 @@ static M100ResponseType setup_and_send_rx(M100Module* module, uint8_t* cmd, size
     // Validation Checks
     uint8_t* data = uhf_buffer_get_data(buffer);
     size_t length = uhf_buffer_get_size(buffer);
+
+    // Log RX bytes (always, so failures are visible)
+    FuriString* rx_log = furi_string_alloc();
+    for(size_t i = 0; i < length; i++) furi_string_cat_printf(rx_log, "%02X ", data[i]);
+    FURI_LOG_D(
+        UHF_MOD_TAG,
+        "RX [%d] (ticks=%d): %s",
+        (int)length,
+        tick_count,
+        furi_string_get_cstr(rx_log));
+    furi_string_free(rx_log);
+
     // check if size > 0
     if(!length) {
         FURI_LOG_D(UHF_MOD_TAG, "Response: empty (waited %d ticks)", tick_count);
@@ -786,6 +805,20 @@ bool m100_set_working_region(M100Module* module, WorkingRegion region) {
     return true;
 }
 
+bool m100_get_transmitting_power(M100Module* module, uint16_t* power_raw) {
+    M100ResponseType result = setup_and_send_rx(
+        module,
+        (uint8_t*)&CMD_GET_TRANSMITTING_POWER.cmd[0],
+        CMD_GET_TRANSMITTING_POWER.length);
+    if(result != M100SuccessResponse) return false;
+    uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
+    size_t length = uhf_buffer_get_size(module->uart->buffer);
+    // Expect: BB 01 B7 00 02 HH LL cs 7E (9 bytes)
+    if(length < 9 || data[2] != 0xB7) return false;
+    *power_raw = ((uint16_t)data[5] << 8) | data[6];
+    return true;
+}
+
 bool m100_set_transmitting_power(M100Module* module, uint16_t power) {
     size_t length = CMD_SET_TRANSMITTING_POWER.length;
     uint8_t cmd[length];
@@ -793,9 +826,40 @@ bool m100_set_transmitting_power(M100Module* module, uint16_t power) {
     cmd[5] = (power >> 8) & 0xFF;
     cmd[6] = power & 0xFF;
     cmd[length - 2] = checksum(cmd + 1, length - 3);
-    setup_and_send_rx(module, cmd, length);
-    module->transmitting_power = power;
+    M100ResponseType result = setup_and_send_rx(module, cmd, length);
+    if(result == M100SuccessResponse) {
+        module->transmitting_power = power;
+    }
+    return result == M100SuccessResponse;
+}
+
+bool m100_get_query_params(M100Module* module, uint8_t* session, uint8_t* target) {
+    M100ResponseType result = setup_and_send_rx(
+        module,
+        (uint8_t*)&CMD_GET_QUERY_PARAMETERS.cmd[0],
+        CMD_GET_QUERY_PARAMETERS.length);
+    if(result != M100SuccessResponse) return false;
+    uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
+    size_t length = uhf_buffer_get_size(module->uart->buffer);
+    // Expect: BB 01 0D 00 02 b0 b1 cs 7E (9 bytes)
+    if(length < 9 || data[2] != 0x0D) return false;
+    *session = data[5] & 0x03;
+    *target = (data[6] >> 7) & 0x01;
     return true;
+}
+
+// Set EPC Gen2 Query parameters (§2.14).
+// Fixed fields: DR=8, M=1, TRext=pilot, Sel=ALL, Q=4.
+// Byte 0: 0x10 | (session & 0x03)  — bits[1:0] = Session
+// Byte 1: ((target & 0x01) << 7) | 0x20  — bit7=Target, bits[6:3]=Q=4
+bool m100_set_query_params(M100Module* module, uint8_t session, uint8_t target) {
+    uint8_t b0 = 0x10 | (session & 0x03);
+    uint8_t b1 = ((target & 0x01) << 7) | 0x20;
+    // Frame: BB 00 0E 00 02 b0 b1 checksum 7E
+    uint8_t cmd[9] = {0xBB, 0x00, 0x0E, 0x00, 0x02, b0, b1, 0x00, 0x7E};
+    cmd[7] = checksum(cmd + 1, 6); // sum(Type..params) & 0xFF
+    M100ResponseType result = setup_and_send_rx(module, cmd, sizeof(cmd));
+    return result == M100SuccessResponse;
 }
 
 bool m100_set_freq_hopping(M100Module* module, bool hopping) {

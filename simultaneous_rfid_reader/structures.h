@@ -164,6 +164,8 @@ typedef struct {
     VariableItem* BaudSelection;
     VariableItem* RegionSelection;
     VariableItem* AntennaSelection;
+    VariableItem* SessionSelection;
+    VariableItem* TargetSelection;
     Widget* WidgetAbout;
 
     View* ViewRead;
@@ -201,10 +203,14 @@ typedef struct {
     char* SettingSavingNames[2];
     char* SettingBaudNames[3];
     char* SettingRegionNames[5];
+    char* SettingSessionNames[4];
+    char* SettingTargetNames[2];
     char* SettingModuleConfigLabel;
     char* SettingSavingConfigLabel;
     char* SettingBaudConfigLabel;
     char* SettingRegionConfigLabel;
+    char* SettingSessionConfigLabel;
+    char* SettingTargetConfigLabel;
     char* SettingLockExecuteConfigLabel;
     char* SettingLockExecuteResult;
 
@@ -259,6 +265,9 @@ typedef struct {
     uint8_t UHFSaveType;
     uint8_t SettingBaudIndex;
     uint8_t SettingRegionIndex;
+    uint8_t SettingSessionIndex;
+    uint8_t SettingTargetIndex;
+    uint8_t SettingPowerIndex;
     uint8_t SettingLockBankIndex;
     uint8_t SettingLockActionIndex;
     uint8_t Setting1Index;

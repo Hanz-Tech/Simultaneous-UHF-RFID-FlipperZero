@@ -13,7 +13,7 @@
 #define UHF_UART_DEFAULT_BAUDRATE 115200
 #define UHF_UART_FRAME_START 0xBB
 #define UHF_UART_FRAME_END 0x7E
-#define UHF_UART_WAIT_TICK 1000
+#define UHF_UART_WAIT_TICK 10000
 
 typedef void (*CallbackFunction)(uint8_t *data, void *ctx);
 
