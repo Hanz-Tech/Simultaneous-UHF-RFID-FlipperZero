@@ -305,7 +305,7 @@ void view_epc_alloc(UHFReaderApp* App) {
 
     view_allocate_model(App->ViewEpc, ViewModelTypeLockFree, sizeof(UHFRFIDTagModel));
     UHFRFIDTagModel* ModelEpc = view_get_model(App->ViewEpc);
-    ModelEpc->Epc = furi_string_alloc_set("Press Read!");
+    ModelEpc->Epc = furi_string_alloc_set("No Tags read");
     ModelEpc->Tid = furi_string_alloc_set("---");
     ModelEpc->User = furi_string_alloc_set("---");
     ModelEpc->Reserved = furi_string_alloc_set("---");

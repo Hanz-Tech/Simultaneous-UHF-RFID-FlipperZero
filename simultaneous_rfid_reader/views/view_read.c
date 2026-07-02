@@ -42,7 +42,7 @@ void uhf_reader_view_read_draw_callback(Canvas* canvas, void* model) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 44, 11, "Read Menu:");
+    canvas_draw_str(canvas, 44, 11, "Main:");
     canvas_set_font(canvas, FontSecondary);
 
     // Row 1: # EPCs and Cur Tag
@@ -77,6 +77,8 @@ void uhf_reader_view_read_draw_callback(Canvas* canvas, void* model) {
     if(!MyModel->IsReading) {
         // Up saves the current tag (handled in the input callback)
         elements_button_up(canvas, "Save");
+        // Down opens the EPC dump screen
+        elements_button_down(canvas, "More");
         elements_button_left(canvas, "Prev");
         elements_button_center(canvas, "Start");
         elements_button_right(canvas, "Next");
@@ -798,7 +800,7 @@ void view_read_alloc(UHFReaderApp* App) {
     view_allocate_model(App->ViewRead, ViewModelTypeLockFree, sizeof(UHFReaderConfigModel));
     UHFReaderConfigModel* Model = view_get_model(App->ViewRead);
     FuriString* EpcValueDefault = furi_string_alloc();
-    furi_string_set_str(EpcValueDefault, "Press Read");
+    furi_string_set_str(EpcValueDefault, "Press Start");
 
     //Setting default values for the view model
     Model->Setting1Index = App->Setting1Index;
@@ -811,7 +813,7 @@ void view_read_alloc(UHFReaderApp* App) {
     Model->Crc = furi_string_alloc_set("XXXX");
     Model->EpcName = furi_string_alloc_set("Enter name");
     Model->ScrollOffset = 0;
-    Model->ScrollingText = "Press Read";
+    Model->ScrollingText = "Press Start";
     Model->EpcValue = EpcValueDefault;
     Model->CurEpcIndex = 1;
     Model->NumEpcsRead = 0;
