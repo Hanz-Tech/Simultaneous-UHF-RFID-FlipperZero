@@ -183,17 +183,35 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
     Buffer* buffer = uart->buffer;
     M100ResponseType result = M100EmptyResponse;
 
+    // Stop any in-progress inventory so the module is in a clean state before
+    // we send CMD_MULTIPLE_POLLING.  If the previous scan was aborted (user pressed
+    // Back) the module may still be running rounds and the new command would race
+    // with the tail of the old inventory.
+    uhf_buffer_reset(buffer);
+    uhf_uart_tick_reset(uart);
+    uhf_uart_send_wait(
+        uart,
+        (uint8_t*)&CMD_STOP_MULTIPLE_POLLING.cmd[0],
+        CMD_STOP_MULTIPLE_POLLING.length);
+    // Drain the stop-ack (or any in-flight EPC/no-tag frames) — 20 rounds ~= 4 ms
+    for(int i = 0; i < 20; i++) {
+        uhf_uart_tick_reset(uart);
+        while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {}
+        if(uhf_is_buffer_closed(buffer)) break;
+    }
+
     // Send CMD_MULTIPLE_POLLING once to start the inventory round
     uhf_buffer_reset(buffer);
+    uhf_uart_tick_reset(uart);
     uhf_uart_send_wait(
         uart,
         (uint8_t*)&CMD_MULTIPLE_POLLING.cmd[0],
         CMD_MULTIPLE_POLLING.length);
 
-    // Collect one EPC notification frame per tag until stopped or list full.
-    // Tracks consecutive no-tag rounds; resets to 0 after each EPC frame found.
-    // 20 consecutive no-tag rounds ≈ 20-100 ms — enough to confirm the field is empty
-    // or that all tags have been collected, without busy-looping through all CNT rounds.
+    // Collect EPC notification frames.  Track consecutive no-tag (cmd=0xFF) rounds;
+    // reset to 0 each time a new unique tag is added.  50 consecutive no-tag rounds
+    // (~50-500 ms) is enough to handle Gen2 Q-adaptation before the first EPC frame
+    // and to confirm the field is empty after all tags have been collected.
     int consecutive_no_tag = 0;
     while(wrapper->tag_count < UHF_TAG_WRAPPER_MAX_TAGS) {
         if(worker->state == UHFWorkerStateStop) {
@@ -201,27 +219,17 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
             break;
         }
 
-        // NOTE: buffer is reset immediately after each frame is copied below.
-        // Do NOT add uhf_buffer_reset here — it would discard bytes the ISR has
-        // already written for the next frame while we were processing the last one.
-
-        // CMD_MULTIPLE_POLLING triggers a Gen2 inventory round that takes 10-100 ms
-        // before the first EPC frame arrives. A single 1000-tick window (~0.1 ms at
-        // 64 MHz) is too short. Use up to 500 tick-reset rounds (~50-500 ms total)
-        // so slow inventory rounds and inter-tag gaps are covered.
-        bool frame_ready = false;
-        for(int round = 0; round < 500; round++) {
-            uhf_uart_tick_reset(uart);
-            while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
-                if(worker->state == UHFWorkerStateStop) break;
-            }
-            if(uhf_is_buffer_closed(buffer)) {
-                frame_ready = true;
-                break;
-            }
+        // Wait up to 200 ms for the next frame using a wall-clock timeout.
+        // furi_get_tick() returns FreeRTOS ms ticks.  This avoids the
+        // volatile-int race between the main thread's uhf_uart_tick decrement
+        // and the ISR's uhf_uart_tick_reset, which could cause the 500-round
+        // spin loop to exit prematurely.
+        uint32_t t0 = furi_get_tick();
+        while(!uhf_is_buffer_closed(buffer)) {
+            if(furi_get_tick() - t0 >= 200) break;
             if(worker->state == UHFWorkerStateStop) break;
         }
-        uhf_uart_tick_reset(uart);
+        bool frame_ready = uhf_is_buffer_closed(buffer);
 
         // Copy frame data to a local buffer and reset the shared buffer immediately.
         // The UART ISR discards all bytes while buffer->closed == true. The module
@@ -235,6 +243,7 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
             memcpy(frame, uhf_buffer_get_data(buffer), length);
         }
         uhf_buffer_reset(buffer); // reopen ISR window ASAP
+        uhf_uart_tick_reset(uart);
         uint8_t* data = frame;
 
         // All rounds exhausted without a frame — inventory round complete
@@ -254,10 +263,10 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         // or that all unique tags have been collected.
         if(data[0] == FRAME_START && length >= 4 && data[2] == 0xFF) {
             consecutive_no_tag++;
-            if(consecutive_no_tag >= 20) {
+            if(consecutive_no_tag >= 50) {
                 FURI_LOG_I(
                     UHF_MOD_TAG,
-                    "multi_poll: 20 consecutive no-tag rounds, stopping (tags=%d)",
+                    "multi_poll: 50 consecutive no-tag rounds, stopping (tags=%d)",
                     (int)wrapper->tag_count);
                 break;
             }
