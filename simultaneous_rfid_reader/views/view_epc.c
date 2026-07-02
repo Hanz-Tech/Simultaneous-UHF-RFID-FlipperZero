@@ -53,14 +53,12 @@ void uhf_reader_view_epc_draw_callback(Canvas* canvas, void* model) {
         canvas_draw_str(canvas, 38, 55, "Reading...");
         elements_button_right(canvas, "Actions");
     } else if(MyModel->DeepReadDone) {
-        // Left = rescan, Center = open Banks screen, Right = Actions
-        elements_button_left(canvas, "Scan");
-        elements_button_center(canvas, "\x19 Banks");
-        elements_button_right(canvas, "Actions");
+        elements_button_left(canvas, "\x19 Banks");  // \x19 = down-arrow glyph in Flipper font
+        elements_button_center(canvas, "Scan");
+        elements_button_right(canvas, "Action");
     } else {
-        // Left = trigger deep read, Right = Actions
-        elements_button_left(canvas, "Banks");
-        elements_button_right(canvas, "Actions");
+        elements_button_center(canvas, "Banks");
+        elements_button_right(canvas, "Action");
     }
 }
 
@@ -88,19 +86,9 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
         return true;
     }
 
-    // Left + DeepReadDone: navigate to Banks screen (must be checked before deep-read trigger)
-    if(event->key == InputKeyLeft && App->DeepReadDone) {
-        view_set_previous_callback(
-            App->ViewEpcInfo, uhf_reader_navigation_banks_to_epc_dump_callback);
-        view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcInfo);
-        return true;
-    }
-
-    // Left (!DeepReadDone) or OK: start / rescan deep-read
-    // Left shows as the "Banks" button in the default state.
-    // OK shows as the center "↓ Banks" button in the DeepReadDone state (rescan).
-    if(((event->key == InputKeyLeft && !App->DeepReadDone) || event->key == InputKeyOk) &&
-       !App->DeepReading && App->UHFModuleType == YRM100X_MODULE && App->NumberOfEpcsToRead > 0) {
+    // Center: start deep-read (only for YRM100 with a tag selected, not already reading)
+    if(event->key == InputKeyOk && !App->DeepReading &&
+       App->UHFModuleType == YRM100X_MODULE && App->NumberOfEpcsToRead > 0) {
         UHFTagWrapper* wrapper = App->YRM100XWorker->uhf_tag_wrapper;
         uint32_t idx = App->CurEpcIndex;
         if(idx >= 1 && idx <= wrapper->tag_count) {
@@ -150,11 +138,19 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
     // Right: navigate to TagAction (always available when a tag is selected)
     if(event->key == InputKeyRight && !App->DeepReading &&
        App->NumberOfEpcsToRead > 0) {
-        // Set Back on TagAction to return to EPC dump
+        // Set Back on TagAction to return to EPC dump (not the scan screen)
         view_set_previous_callback(
             submenu_get_view(App->SubmenuTagActions),
-            uhf_reader_navigation_exit_view_epc_callback);
+            uhf_reader_navigation_banks_to_epc_dump_callback);
         view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewTagAction);
+        return true;
+    }
+
+    // Left: navigate to Banks screen (only after deep-read is done)
+    if(event->key == InputKeyLeft && App->DeepReadDone) {
+        view_set_previous_callback(
+            App->ViewEpcInfo, uhf_reader_navigation_banks_to_epc_dump_callback);
+        view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcInfo);
         return true;
     }
 
