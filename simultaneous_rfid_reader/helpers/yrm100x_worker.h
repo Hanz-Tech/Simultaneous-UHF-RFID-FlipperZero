@@ -20,6 +20,7 @@ typedef enum {
     UHFWorkerStateVerify,
     // Main worker states
     UHFWorkerStateDetectSingle,
+    UHFWorkerStateDetectMultiple,
     UHFWorkerStateWriteSingle,
     UHFWorkerStateWriteKey,
     //UHFWorkerStateKillTag,

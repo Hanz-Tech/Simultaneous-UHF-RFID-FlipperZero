@@ -251,6 +251,27 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
     return UHFWorkerEventSuccess;
 }
 
+static UHFWorkerEvent detect_multiple_cards(UHFWorker* uhf_worker) {
+    FURI_LOG_I(UHF_WK_TAG, "=== Starting detect_multiple_cards ===");
+    // Clear any tags from a previous multi-poll round
+    uhf_tag_wrapper_reset_list(uhf_worker->uhf_tag_wrapper);
+    M100ResponseType status =
+        m100_multi_poll(uhf_worker->module, uhf_worker->uhf_tag_wrapper, uhf_worker);
+    if(uhf_worker->state == UHFWorkerStateStop) {
+        FURI_LOG_I(UHF_WK_TAG, "detect_multiple_cards: aborted");
+        return UHFWorkerEventAborted;
+    }
+    FURI_LOG_I(
+        UHF_WK_TAG,
+        "detect_multiple_cards: status=%d, tags=%d",
+        (int)status,
+        (int)uhf_worker->uhf_tag_wrapper->tag_count);
+    if(status == M100SuccessResponse && uhf_worker->uhf_tag_wrapper->tag_count > 0) {
+        return UHFWorkerEventSuccess;
+    }
+    return UHFWorkerEventNoTagDetected;
+}
+
 int32_t uhf_worker_task(void* ctx) {
     UHFWorker* uhf_worker = ctx;
     if(uhf_worker->state == UHFWorkerStateVerify) {
@@ -258,6 +279,9 @@ int32_t uhf_worker_task(void* ctx) {
         uhf_worker->callback(event, uhf_worker->ctx);
     } else if(uhf_worker->state == UHFWorkerStateDetectSingle) {
         UHFWorkerEvent event = read_single_card(uhf_worker);
+        uhf_worker->callback(event, uhf_worker->ctx);
+    } else if(uhf_worker->state == UHFWorkerStateDetectMultiple) {
+        UHFWorkerEvent event = detect_multiple_cards(uhf_worker);
         uhf_worker->callback(event, uhf_worker->ctx);
     } else if(uhf_worker->state == UHFWorkerStateWriteSingle) {
         UHFWorkerEvent event = write_single_card(uhf_worker);

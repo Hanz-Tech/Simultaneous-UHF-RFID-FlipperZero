@@ -266,6 +266,7 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
 
         // Allocate new tag, populate EPC fields, add to wrapper list
         UHFTag* new_tag = uhf_tag_alloc();
+        uhf_tag_reset(new_tag);
         uhf_tag_set_epc_pc(new_tag, pc);
         uhf_tag_set_epc_crc(new_tag, crc);
         uhf_tag_set_epc(new_tag, epc_data, epc_len);

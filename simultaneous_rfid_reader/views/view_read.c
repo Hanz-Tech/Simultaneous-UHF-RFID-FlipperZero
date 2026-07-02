@@ -503,11 +503,16 @@ void uhf_read_tag_worker_callback(UHFWorkerEvent event, void* ctx) {
         },
         true);
 
-    if(event == UHFWorkerEventSuccess) {
+    if(event == UHFWorkerEventSuccess || event == UHFWorkerEventNoTagDetected) {
         notification_message(App->Notifications, &uhf_sequence_blink_stop);
-        notification_message(App->Notifications, &sequence_success);
-        dolphin_deed(DolphinDeedNfcReadSuccess);
+        if(event == UHFWorkerEventSuccess) {
+            notification_message(App->Notifications, &sequence_success);
+            dolphin_deed(DolphinDeedNfcReadSuccess);
+        }
         view_dispatcher_send_custom_event(App->ViewDispatcher, UHFCustomEventWorkerExit);
+    } else if(event == UHFWorkerEventAborted) {
+        notification_message(App->Notifications, &uhf_sequence_blink_stop);
+        view_dispatcher_send_custom_event(App->ViewDispatcher, UHFCustomEventWorkerExitAborted);
     }
 }
 
@@ -529,72 +534,77 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
         return true;
     }
 
-    //Handles the worker exiting after a read
+    //Handles the worker exiting after a multi-tag read
     case UHFCustomEventWorkerExit: {
         bool Redraw = true;
         App->IsReading = false;
-
-        //Stop the worker
         uhf_worker_stop(App->YRM100XWorker);
 
-        //Get the tag read
-        UHFTag* TestTag = App->YRM100XWorker->uhf_tag_wrapper->uhf_tag;
+        UHFTagWrapper* wrapper = App->YRM100XWorker->uhf_tag_wrapper;
+        size_t count = wrapper->tag_count;
+        App->NumberOfEpcsToRead = count;
+        App->CurEpcIndex = 1;
+        App->CurTidIndex = 0;
+        App->CurResIndex = 0;
+        App->CurMemIndex = 0;
 
-        //Parse all of the memory banks
-        char* TempEpc = convertToHexString(TestTag->epc->data, TestTag->epc->size);
-        char* TempTid = convertToHexString(TestTag->tid->data, TestTag->tid->size);
-        char* TempPass = convertToHexString(TestTag->reserved->access_password, 4);
-        char* TempKill = convertToHexString(TestTag->reserved->kill_password, 4);
-        char* TempRes = combineArrays(TempKill, TempPass);
-        char* TempUser = convertToHexString(TestTag->user->data, TestTag->user->size);
-        char* TempCrc = uint16_to_hex_string(TestTag->epc->crc);
-        char* TempPc = uint16_to_hex_string(TestTag->epc->pc);
+        if(count > 0) {
+            UHFTag* first = wrapper->tags[0];
+            char* TempEpc = convertToHexString(first->epc->data, first->epc->size);
+            char* TempCrc = uint16_to_hex_string(first->epc->crc);
+            char* TempPc = uint16_to_hex_string(first->epc->pc);
 
-        //If any of the banks returned empty, create visual placeholders to indicate to the user that something failed to read.
-        if(strcmp(TempUser, " ") == 0 || TempUser == NULL) {
-            TempUser = "XXXXXXXX";
+            with_view_model(
+                App->ViewRead,
+                UHFReaderConfigModel * _model,
+                {
+                    furi_string_set_str(_model->EpcValue, TempEpc);
+                    _model->IsReading = false;
+                    _model->NumEpcsRead = (uint32_t)count;
+                    _model->CurEpcIndex = 1;
+                    furi_string_set_str(_model->Crc, TempCrc);
+                    furi_string_set_str(_model->Pc, TempPc);
+                },
+                Redraw);
+            with_view_model(
+                App->ViewEpc,
+                UHFRFIDTagModel * _model,
+                {
+                    furi_string_set_str(_model->Epc, TempEpc);
+                    furi_string_set_str(_model->Tid, "---");
+                    furi_string_set_str(_model->User, "---");
+                    furi_string_set_str(_model->Reserved, "---");
+                    furi_string_set_str(_model->Crc, TempCrc);
+                    furi_string_set_str(_model->Pc, TempPc);
+                },
+                Redraw);
+            free(TempEpc);
+            free(TempCrc);
+            free(TempPc);
+        } else {
+            with_view_model(
+                App->ViewRead,
+                UHFReaderConfigModel * _model,
+                {
+                    furi_string_set_str(_model->EpcValue, "No tags found");
+                    _model->IsReading = false;
+                    _model->NumEpcsRead = 0;
+                    _model->CurEpcIndex = 0;
+                },
+                Redraw);
         }
-        if(strcmp(TempTid, " ") == 0 || TempTid == NULL) {
-            TempTid = "XXXXXXXX";
-        }
-        if(strcmp(TempRes, " ") == 0 || TempRes == NULL) {
-            TempRes = "XXXXXXXX";
-        }
-        App->CurEpcIndex = 26;
-        App->NumberOfEpcsToRead = 1;
+        return true;
+    }
 
+    //Handles the worker exiting after user pressed Stop
+    case UHFCustomEventWorkerExitAborted: {
+        bool Redraw = true;
+        App->IsReading = false;
         with_view_model(
             App->ViewRead,
             UHFReaderConfigModel * _model,
-            {
-                furi_string_set_str(_model->EpcValue, TempEpc);
-                _model->IsReading = App->IsReading;
-                _model->NumEpcsRead = App->NumberOfEpcsToRead;
-                _model->CurEpcIndex = 1;
-                furi_string_set_str(_model->Crc, TempCrc);
-                furi_string_set_str(_model->Pc, TempPc);
-            },
+            { _model->IsReading = false; },
             Redraw);
-        with_view_model(
-            App->ViewEpc,
-            UHFRFIDTagModel * _model,
-            {
-                furi_string_set_str(_model->Epc, TempEpc);
-                furi_string_set_str(_model->Tid, TempTid);
-                furi_string_set_str(_model->User, TempUser);
-                furi_string_set_str(_model->Reserved, TempRes);
-                furi_string_set_str(_model->Crc, TempCrc);
-                furi_string_set_str(_model->Pc, TempPc);
-            },
-            Redraw);
-        free(TempEpc);
-        free(TempTid);
-        free(TempUser);
-        free(TempCrc);
-        free(TempPc);
-        free(TempRes);
-        free(TempKill);
-        free(TempPass);
         return true;
     }
 
@@ -634,7 +644,7 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
                         true);
                     uhf_worker_start(
                         App->YRM100XWorker,
-                        UHFWorkerStateDetectSingle,
+                        UHFWorkerStateDetectMultiple,
                         uhf_read_tag_worker_callback,
                         App);
                 }
