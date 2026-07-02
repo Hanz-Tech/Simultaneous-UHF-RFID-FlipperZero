@@ -57,7 +57,7 @@ void uhf_reader_view_epc_draw_callback(Canvas* canvas, void* model) {
         elements_button_center(canvas, "Rescan");
         elements_button_right(canvas, "Actions");
     } else {
-        elements_button_center(canvas, "Deep Read");
+        elements_button_center(canvas, "Banks");
         elements_button_right(canvas, "Actions");
     }
 }
@@ -146,8 +146,8 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
         return true;
     }
 
-    // Down: navigate to Banks screen (only after deep-read is done)
-    if(event->key == InputKeyDown && App->DeepReadDone) {
+    // Left: navigate to Banks screen (only after deep-read is done)
+    if(event->key == InputKeyLeft && App->DeepReadDone) {
         view_set_previous_callback(
             App->ViewEpcInfo, uhf_reader_navigation_banks_to_epc_dump_callback);
         view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcInfo);
