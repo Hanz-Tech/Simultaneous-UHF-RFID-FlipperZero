@@ -52,13 +52,19 @@ typedef struct {
     UserMemoryBank* user;
 } UHFTag;
 
+#define UHF_TAG_WRAPPER_MAX_TAGS 25
+
 typedef struct UHFTagWrapper {
     UHFTag* uhf_tag;
+    UHFTag* tags[UHF_TAG_WRAPPER_MAX_TAGS];
+    size_t tag_count;
 } UHFTagWrapper;
 
 UHFTagWrapper* uhf_tag_wrapper_alloc();
 void uhf_tag_wrapper_set_tag(UHFTagWrapper* uhf_tag_wrapper, UHFTag* uhf_tag);
 void uhf_tag_wrapper_free(UHFTagWrapper* uhf_tag_wrapper);
+bool uhf_tag_wrapper_add_tag(UHFTagWrapper* uhf_tag_wrapper, UHFTag* uhf_tag);
+void uhf_tag_wrapper_reset_list(UHFTagWrapper* uhf_tag_wrapper);
 
 UHFTag* uhf_tag_alloc();
 void uhf_tag_reset(UHFTag* uhf_tag);

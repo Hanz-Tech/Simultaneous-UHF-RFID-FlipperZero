@@ -11,6 +11,10 @@
 UHFTagWrapper* uhf_tag_wrapper_alloc() {
     UHFTagWrapper* uhf_tag_wrapper = (UHFTagWrapper*)malloc(sizeof(UHFTagWrapper));
     uhf_tag_wrapper->uhf_tag = NULL;
+    uhf_tag_wrapper->tag_count = 0;
+    for(size_t i = 0; i < UHF_TAG_WRAPPER_MAX_TAGS; i++) {
+        uhf_tag_wrapper->tags[i] = NULL;
+    }
     return uhf_tag_wrapper;
 }
 
@@ -23,7 +27,27 @@ void uhf_tag_wrapper_set_tag(UHFTagWrapper* uhf_tag_wrapper, UHFTag* uhf_tag) {
 
 void uhf_tag_wrapper_free(UHFTagWrapper* uhf_tag_wrapper) {
     uhf_tag_free(uhf_tag_wrapper->uhf_tag);
+    for(size_t i = 0; i < uhf_tag_wrapper->tag_count; i++) {
+        uhf_tag_free(uhf_tag_wrapper->tags[i]);
+        uhf_tag_wrapper->tags[i] = NULL;
+    }
+    uhf_tag_wrapper->tag_count = 0;
     free(uhf_tag_wrapper);
+}
+
+bool uhf_tag_wrapper_add_tag(UHFTagWrapper* uhf_tag_wrapper, UHFTag* uhf_tag) {
+    if(uhf_tag_wrapper->tag_count >= UHF_TAG_WRAPPER_MAX_TAGS) return false;
+    uhf_tag_wrapper->tags[uhf_tag_wrapper->tag_count] = uhf_tag;
+    uhf_tag_wrapper->tag_count++;
+    return true;
+}
+
+void uhf_tag_wrapper_reset_list(UHFTagWrapper* uhf_tag_wrapper) {
+    for(size_t i = 0; i < uhf_tag_wrapper->tag_count; i++) {
+        uhf_tag_free(uhf_tag_wrapper->tags[i]);
+        uhf_tag_wrapper->tags[i] = NULL;
+    }
+    uhf_tag_wrapper->tag_count = 0;
 }
 
 UHFTag* uhf_tag_alloc() {
