@@ -22,19 +22,19 @@ void uhf_reader_view_epc_draw_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 4, 11, "            EPC Info:");
     canvas_set_font(canvas, FontSecondary);
 
-    // EPC value — wrap at 24 chars per line, no scrolling
+    // EPC value — wrap at 20 chars per line (120px fits 128px display)
     const char* EpcStr = furi_string_get_cstr(MyModel->Epc);
     size_t EpcLen = strlen(EpcStr);
-    uint32_t CharsPerLine = 24;
+    const size_t CharsPerLine = 20;
 
-    char Line1[25];
+    char Line1[21];
     memset(Line1, 0, sizeof(Line1));
     size_t L1 = EpcLen < CharsPerLine ? EpcLen : CharsPerLine;
     memcpy(Line1, EpcStr, L1);
     canvas_draw_str(canvas, 0, 22, Line1);
 
     if(EpcLen > CharsPerLine) {
-        char Line2[25];
+        char Line2[21];
         memset(Line2, 0, sizeof(Line2));
         size_t L2 = (EpcLen - CharsPerLine) < CharsPerLine ?
                         (EpcLen - CharsPerLine) : CharsPerLine;
@@ -112,6 +112,9 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
 
             notification_message(App->Notifications, &uhf_sequence_blink_start_cyan);
 
+            // Ensure any previous worker run has fully exited before restarting
+            uhf_worker_stop(App->YRM100XWorker);
+
             // Start worker
             uhf_worker_start(
                 App->YRM100XWorker,
@@ -119,8 +122,12 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
                 uhf_deep_read_worker_callback,
                 App);
 
-            // Start 5-second one-shot timeout
-            furi_assert(App->Timer == NULL);
+            // Start 5-second one-shot timeout (defensive: free any stale timer)
+            if(App->Timer) {
+                furi_timer_stop(App->Timer);
+                furi_timer_free(App->Timer);
+                App->Timer = NULL;
+            }
             App->Timer = furi_timer_alloc(
                 uhf_deep_read_timeout_callback, FuriTimerTypeOnce, App);
             furi_timer_start(App->Timer, furi_ms_to_ticks(5000));

@@ -53,12 +53,12 @@ void uhf_reader_view_read_draw_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 70, 22, "Cur Tag:");
     canvas_draw_str(canvas, 115, 22, furi_string_get_cstr(XStr));
 
-    // Row 2 + 3: Full EPC value, wrapped at 24 chars per line (no scrolling)
+    // Row 2 + 3: Full EPC value, wrapped at 20 chars per line (fits 128px display)
     const char* EpcStr = furi_string_get_cstr(MyModel->EpcValue);
     size_t EpcLen = strlen(EpcStr);
-    uint32_t CharsPerLine = 24;
+    const size_t CharsPerLine = 20;
 
-    char Line1[CharsPerLine + 1];
+    char Line1[21];
     memset(Line1, 0, sizeof(Line1));
     size_t Line1Len = EpcLen < CharsPerLine ? EpcLen : CharsPerLine;
     memcpy(Line1, EpcStr, Line1Len);
@@ -66,7 +66,7 @@ void uhf_reader_view_read_draw_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 0, 33, Line1);
 
     if(EpcLen > CharsPerLine) {
-        char Line2[CharsPerLine + 1];
+        char Line2[21];
         memset(Line2, 0, sizeof(Line2));
         size_t Line2Len = (EpcLen - CharsPerLine) < CharsPerLine ?
                               (EpcLen - CharsPerLine) : CharsPerLine;
