@@ -189,8 +189,6 @@ bool uhf_reader_view_epc_custom_event_callback(uint32_t event, void* context) {
         char* TempTid = convertToHexString(tag->tid->data, tag->tid->size);
         char* TempUser = convertToHexString(tag->user->data, tag->user->size);
         char* TempRes = convertToHexString(reserved_buf, 8);
-        char* TempCrc = uint16_to_hex_string(tag->epc->crc);
-        char* TempPc = uint16_to_hex_string(tag->epc->pc);
 
         App->NumberOfTidsToRead = 1;
         App->NumberOfResToRead = 1;
@@ -204,8 +202,6 @@ bool uhf_reader_view_epc_custom_event_callback(uint32_t event, void* context) {
                 furi_string_set_str(_model->Tid, TempTid);
                 furi_string_set_str(_model->User, TempUser);
                 furi_string_set_str(_model->Reserved, TempRes);
-                furi_string_set_str(_model->Crc, TempCrc);
-                furi_string_set_str(_model->Pc, TempPc);
             },
             false);
 
@@ -213,8 +209,6 @@ bool uhf_reader_view_epc_custom_event_callback(uint32_t event, void* context) {
         free(TempTid);
         free(TempUser);
         free(TempRes);
-        free(TempCrc);
-        free(TempPc);
 
         // Update EPC dump model to show ↓Banks hint
         with_view_model(

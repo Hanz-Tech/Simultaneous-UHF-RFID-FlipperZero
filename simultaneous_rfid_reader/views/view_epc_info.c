@@ -254,6 +254,8 @@ void view_epc_info_alloc(UHFReaderApp* App) {
     ModelEpcInfo->Epc = EpcInfo;
     ModelEpcInfo->Tid = TidMemEpcInfo;
     ModelEpcInfo->Reserved = ReservedMemEpcInfo;
+    ModelEpcInfo->Crc = furi_string_alloc_set("----");
+    ModelEpcInfo->Pc = furi_string_alloc_set("----");
     ModelEpcInfo->ScrollOffsetEpc = 0;
     ModelEpcInfo->ScrollingTextEpc = "EPC VALUE HERE";
     ModelEpcInfo->ScrollOffsetTid = 0;
