@@ -199,7 +199,21 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
 
         // Reset buffer to receive next frame
         uhf_buffer_reset(buffer);
-        while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
+
+        // CMD_MULTIPLE_POLLING triggers a Gen2 inventory round that takes 10-100 ms
+        // before the first EPC frame arrives. A single 1000-tick window (~0.1 ms at
+        // 64 MHz) is too short. Use up to 500 tick-reset rounds (~50-500 ms total)
+        // so slow inventory rounds and inter-tag gaps are covered.
+        bool frame_ready = false;
+        for(int round = 0; round < 500; round++) {
+            uhf_uart_tick_reset(uart);
+            while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
+                if(worker->state == UHFWorkerStateStop) break;
+            }
+            if(uhf_is_buffer_closed(buffer)) {
+                frame_ready = true;
+                break;
+            }
             if(worker->state == UHFWorkerStateStop) break;
         }
         uhf_uart_tick_reset(uart);
@@ -207,8 +221,8 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         uint8_t* data = uhf_buffer_get_data(buffer);
         size_t length = uhf_buffer_get_size(buffer);
 
-        // Tick timeout — inventory round ended naturally
-        if(!length || !uhf_is_buffer_closed(buffer)) {
+        // All rounds exhausted without a frame — inventory round complete
+        if(!frame_ready) {
             FURI_LOG_I(
                 UHF_MOD_TAG,
                 "multi_poll: no more frames, total tags=%d",
@@ -287,8 +301,11 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         uart,
         (uint8_t*)&CMD_STOP_MULTIPLE_POLLING.cmd[0],
         CMD_STOP_MULTIPLE_POLLING.length);
-    // Drain the stop-ack frame
-    while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
+    // Drain the stop-ack frame (module responds quickly; 20 rounds is sufficient)
+    for(int round = 0; round < 20; round++) {
+        uhf_uart_tick_reset(uart);
+        while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {}
+        if(uhf_is_buffer_closed(buffer)) break;
     }
     uhf_uart_tick_reset(uart);
 
