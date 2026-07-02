@@ -230,6 +230,17 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
             break;
         }
 
+        // §2.3.3: no-tag / CRC-error response — cmd=0xFF — signals an inventory round
+        // completed with no tag found. Break to avoid busy-looping across all CNT
+        // rounds when no tags are in the field.
+        if(data[0] == FRAME_START && length >= 4 && data[2] == 0xFF) {
+            FURI_LOG_I(
+                UHF_MOD_TAG,
+                "multi_poll: no-tag round (cmd=0xFF), total tags=%d",
+                (int)wrapper->tag_count);
+            break;
+        }
+
         // Validate frame structure and checksum
         if(length < 13 || data[0] != FRAME_START || data[length - 1] != FRAME_END) {
             FURI_LOG_W(UHF_MOD_TAG, "multi_poll: invalid frame, len=%d", (int)length);
