@@ -112,10 +112,12 @@ void uhf_reader_rename_text_updated(void* context) {
     furi_string_free(TempStr);
     furi_string_free(TempTag);
 
-    //Remove the current saved submenu to reallocate and update it
-    view_dispatcher_remove_view(App->ViewDispatcher, UHFReaderViewSaved);
-    submenu_free(App->SubmenuSaved);
-    App->SubmenuSaved = submenu_alloc();
+    //Rebuild the saved submenu in place. This callback runs inside the rename
+    //text-input's result handler, so we must NOT remove/free/re-register the
+    //Saved view object here (doing so corrupts the dispatcher/GUI state and
+    //freezes the UI). submenu_reset clears the items while keeping the same
+    //view registered with the dispatcher.
+    submenu_reset(App->SubmenuSaved);
     submenu_set_header(App->SubmenuSaved, "Saved EPCs");
 
     //Update the index file or create a new one doesn't exist
@@ -174,10 +176,8 @@ void uhf_reader_rename_text_updated(void* context) {
         flipper_format_file_close(App->EpcFile);
     }
 
-    view_set_previous_callback(
-        submenu_get_view(App->SubmenuSaved), uhf_reader_navigation_saved_exit_callback);
-    view_dispatcher_add_view(
-        App->ViewDispatcher, UHFReaderViewSaved, submenu_get_view(App->SubmenuSaved));
+    //The Saved view is still registered (we only reset its items), so just
+    //navigate back to it.
     view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewSaved);
 }
 
@@ -200,21 +200,31 @@ void uhf_reader_submenu_tag_info_callback(void* context, uint32_t index) {
     case UHFReaderSubmenuIndexTagRename:
         text_input_set_header_text(App->RenameInput, "Rename EPC");
 
-        //Grab the text from the rename text input
-        bool Redraw = false;
-        with_view_model(
-            App->ViewWrite,
-            UHFReaderWriteModel * Model,
-            {
-                strncpy(
-                    App->TempSaveBuffer,
-                    furi_string_get_cstr(Model->EpcName),
-                    App->TempBufferSaveSize);
-            },
-            Redraw);
+        //Pre-populate the keyboard with the tag's current name so the user can
+        //edit it in place. Read the saved record for the selected tag and pull
+        //out the name field into the text-input buffer.
+        App->TempSaveBuffer[0] = '\0';
+        if(flipper_format_file_open_existing(App->EpcFile, APP_DATA_PATH("Saved_EPCs.txt"))) {
+            FuriString* TempKey = furi_string_alloc();
+            FuriString* TempTag = furi_string_alloc();
+            furi_string_printf(TempKey, "Tag%ld", App->SelectedTagIndex);
+            if(flipper_format_read_string(
+                   App->EpcFile, furi_string_get_cstr(TempKey), TempTag)) {
+                char* ExtractedName = extract_name(furi_string_get_cstr(TempTag));
+                if(ExtractedName != NULL) {
+                    strncpy(App->TempSaveBuffer, ExtractedName, App->TempBufferSaveSize);
+                    App->TempSaveBuffer[App->TempBufferSaveSize - 1] = '\0';
+                    free(ExtractedName);
+                }
+            }
+            furi_string_free(TempKey);
+            furi_string_free(TempTag);
+            flipper_format_file_close(App->EpcFile);
+        }
 
-        // Configure the text input.  When user enters text and clicks OK then the rename text updated callback will run
-        bool ClearPreviousText = true;
+        // Configure the text input. Keep the pre-filled current name (don't clear)
+        // so it appears as an editable default when the keyboard opens.
+        bool ClearPreviousText = false;
         text_input_set_result_callback(
             App->RenameInput,
             uhf_reader_rename_text_updated,
