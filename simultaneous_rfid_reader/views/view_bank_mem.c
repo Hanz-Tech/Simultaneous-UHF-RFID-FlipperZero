@@ -18,6 +18,18 @@ static const char* bank_mem_name(uint32_t bank) {
     }
 }
 
+// Short bank labels for the browse buttons (must fit the narrow button width).
+static const char* bank_mem_short_name(uint32_t bank) {
+    switch(bank) {
+    case 0:
+        return "TID";
+    case 1:
+        return "Res";
+    default:
+        return "Usr";
+    }
+}
+
 static BankType bank_mem_type(uint32_t bank) {
     switch(bank) {
     case 0:
@@ -54,17 +66,25 @@ void uhf_reader_view_bank_mem_draw_callback(Canvas* canvas, void* model) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
 
-    // Header (bank name) top-left; "More" button bottom-right.
+    // Header (bank name) top-left.
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 0, 11, bank_mem_name(MyModel->CurrentBank));
     canvas_set_font(canvas, FontSecondary);
-    elements_button_right(canvas, "More");
 
-    // Busy state: single-bank read in progress.
+    // Busy state: single-bank read in progress (no browsing while reading).
     if(MyModel->IsDeepReading) {
         canvas_draw_str(canvas, 34, 40, "Reading...");
         return;
     }
+
+    // Bank browse ring buttons: Left = previous node, Right = next node.
+    // TID's previous and User's next are both the EPC dump screen.
+    elements_button_left(
+        canvas,
+        MyModel->CurrentBank == 0 ? "EPC" : bank_mem_short_name(MyModel->CurrentBank - 1));
+    elements_button_right(
+        canvas,
+        MyModel->CurrentBank == 2 ? "EPC" : bank_mem_short_name(MyModel->CurrentBank + 1));
 
     const char* Content = furi_string_get_cstr(bank_mem_string(MyModel));
     size_t Len = strlen(Content);
@@ -188,7 +208,7 @@ bool uhf_reader_view_bank_mem_input_callback(InputEvent* event, void* context) {
         return true;
     }
 
-    // Right: More — advance to the next bank; wrap User → EPC dump.
+    // Right: browse forward to the next bank; wrap User → EPC dump.
     if(event->key == InputKeyRight && !App->DeepReading) {
         uint32_t Cur = 0;
         with_view_model(
@@ -199,6 +219,26 @@ bool uhf_reader_view_bank_mem_input_callback(InputEvent* event, void* context) {
                 UHFRFIDTagModel * m,
                 {
                     m->CurrentBank = Cur + 1;
+                    m->VScrollLine = 0;
+                },
+                true);
+        } else {
+            view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcDump);
+        }
+        return true;
+    }
+
+    // Left: browse backward to the previous bank; wrap TID → EPC dump.
+    if(event->key == InputKeyLeft && !App->DeepReading) {
+        uint32_t Cur = 0;
+        with_view_model(
+            App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
+        if(Cur > 0) {
+            with_view_model(
+                App->ViewBankMem,
+                UHFRFIDTagModel * m,
+                {
+                    m->CurrentBank = Cur - 1;
                     m->VScrollLine = 0;
                 },
                 true);

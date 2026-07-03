@@ -191,6 +191,12 @@ void uhf_reader_submenu_tag_info_callback(void* context, uint32_t index) {
     UHFReaderApp* App = (UHFReaderApp*)context;
 
     switch(index) {
+    //Handles saving a live, in-memory scanned tag. Reuses the same keyboard/save
+    //flow the old EPC-dump left-arrow used, returning to the EPC dump afterward.
+    case UHFReaderSubmenuIndexTagSave:
+        uhf_reader_begin_save_tag(App, App->ViewEpc, UHFReaderViewEpcDump);
+        break;
+
     //Handles the Tag Info menu
     case UHFReaderSubmenuIndexTagInfo:
         view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcInfo);
@@ -284,7 +290,14 @@ void uhf_reader_build_tag_action_menu(UHFReaderApp* App) {
     submenu_set_header(App->SubmenuTagActions, "EPC Actions");
 
     if(App->ActionContext == ActionFromLive) {
-        //Unsaved, in-memory scanned tag: targeted actions only.
+        //Unsaved, in-memory scanned tag: targeted actions only. Save is offered
+        //here (instead of the old EPC-dump left-arrow) and only for live tags.
+        submenu_add_item(
+            App->SubmenuTagActions,
+            "Save",
+            UHFReaderSubmenuIndexTagSave,
+            uhf_reader_submenu_tag_info_callback,
+            App);
         submenu_add_item(
             App->SubmenuTagActions,
             "Update",

@@ -31,6 +31,7 @@ typedef enum {
     UHFReaderSubmenuIndexRead,
     UHFReaderSubmenuIndexDelete,
     UHFReaderSubmenuIndexTagInfo,
+    UHFReaderSubmenuIndexTagSave,
     UHFReaderSubmenuIndexTagRename,
     UHFReaderSubmenuIndexEpcLock,
     UHFReaderSubmenuIndexTidLock,
