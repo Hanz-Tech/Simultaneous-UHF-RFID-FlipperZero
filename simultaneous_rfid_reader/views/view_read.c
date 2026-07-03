@@ -359,6 +359,9 @@ bool uhf_reader_view_read_input_callback(InputEvent* event, void* context) {
                         furi_string_set_str(model->Pc, TempPc);
                         model->Rssi = tag->epc->rssi;
                         model->DeepReadDone = false;
+                        model->TidBankRead = false;
+                        model->UserBankRead = false;
+                        model->ResBankRead = false;
                     },
                     Redraw);
                 free(TempEpc);
@@ -409,6 +412,9 @@ bool uhf_reader_view_read_input_callback(InputEvent* event, void* context) {
                         furi_string_set_str(model->Pc, TempPc);
                         model->Rssi = tag->epc->rssi;
                         model->DeepReadDone = false;
+                        model->TidBankRead = false;
+                        model->UserBankRead = false;
+                        model->ResBankRead = false;
                     },
                     Redraw);
                 free(TempEpc);

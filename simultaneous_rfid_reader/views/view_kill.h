@@ -13,3 +13,5 @@ void view_kill_alloc(UHFReaderApp* App);
 void view_kill_free(UHFReaderApp* App);
 
 void uhf_reader_fetch_selected_tag(void* context);
+
+void uhf_reader_prepare_write_target(void* context);

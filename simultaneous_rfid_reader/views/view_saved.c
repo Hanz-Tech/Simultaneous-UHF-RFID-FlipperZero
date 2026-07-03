@@ -24,6 +24,11 @@ void uhf_reader_submenu_saved_callback(void* context, uint32_t index) {
         break;
     default:
         App->SelectedTagIndex = index;
+        App->ActionContext = ActionFromSaved;
+        uhf_reader_build_tag_action_menu(App);
+        view_set_previous_callback(
+            submenu_get_view(App->SubmenuTagActions),
+            uhf_reader_navigation_tag_action_exit_callback);
         view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewTagAction);
         break;
     }

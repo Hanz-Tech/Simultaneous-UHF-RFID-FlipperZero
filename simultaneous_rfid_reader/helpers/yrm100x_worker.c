@@ -292,21 +292,67 @@ UHFWorkerEvent read_single_bank_selected(UHFWorker* uhf_worker) {
 
 //Modified by Riley Haffner to be able to write to the reserved bank
 UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
-    //uhf_worker->TagToWrite
-    UHFTag* uhf_tag_des = send_polling_command(uhf_worker);
-    if(uhf_tag_des == NULL) return UHFWorkerEventAborted;
+    //Targeted (unsaved) writes address a specific tag whose current EPC/PC/CRC is
+    //preloaded into SelectedTag: select by that EPC and never poll a random tag.
+    //Single-poll (saved) writes fall back to the first responder in the field.
+    UHFTag* uhf_tag_des;
+    bool targeted = uhf_worker->Targeted;
+    uint32_t deadline = targeted ? furi_get_tick() + furi_ms_to_ticks(10000) : 0;
+
+    if(targeted) {
+        //Poll repeatedly and only proceed once the tag whose current EPC matches
+        //our target answers. This targets the exact scanned tag AND gives us a
+        //real tag object (correct PC/CRC/size) for the write frame — a fabricated
+        //tag built from on-screen strings can carry an unread ("----") PC/CRC and
+        //make the EPC write silently ineffective.
+        UHFTag* target = uhf_worker->SelectedTag;
+        UHFTag* probe = uhf_tag_alloc();
+        bool found = false;
+        while(!found) {
+            if(uhf_worker->state == UHFWorkerStateStop) {
+                uhf_tag_free(probe);
+                return UHFWorkerEventAborted;
+            }
+            if(furi_get_tick() >= deadline) {
+                uhf_tag_free(probe);
+                return UHFWorkerEventAborted;
+            }
+            if(m100_single_poll(uhf_worker->module, probe) != M100SuccessResponse) {
+                continue;
+            }
+            if(probe->epc->size == target->epc->size &&
+               memcmp(probe->epc->data, target->epc->data, target->epc->size) == 0) {
+                found = true;
+            }
+        }
+        //Copy the freshly polled tag's real EPC/PC/CRC into SelectedTag so the
+        //select + write frames use accurate values.
+        uhf_tag_set_epc(target, probe->epc->data, probe->epc->size);
+        uhf_tag_set_epc_pc(target, probe->epc->pc);
+        uhf_tag_set_epc_crc(target, probe->epc->crc);
+        uhf_tag_free(probe);
+        uhf_tag_des = target;
+    } else {
+        uhf_tag_des = send_polling_command(uhf_worker);
+        if(uhf_tag_des == NULL) return UHFWorkerEventAborted;
+    }
 
     UHFTag* uhf_tag_from = uhf_worker->NewTag;
     M100ResponseType rp_type;
     do {
         rp_type = m100_set_select(uhf_worker->module, uhf_tag_des);
         if(uhf_worker->state == UHFWorkerStateStop) return UHFWorkerEventAborted;
+        if(targeted && furi_get_tick() >= deadline) return UHFWorkerEventAborted;
         if(rp_type == M100SuccessResponse) break;
     } while(true);
     while(m100_is_write_mask_enabled(uhf_worker->module, WRITE_USER)) {
         rp_type = m100_write_label_data_storage(
             uhf_worker->module, uhf_tag_from, uhf_tag_des, UserBank, 0, uhf_worker->DefaultAP);
         if(uhf_worker->state == UHFWorkerStateStop) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_USER);
+            return UHFWorkerEventAborted;
+        }
+        if(targeted && furi_get_tick() >= deadline) {
             m100_disable_write_mask(uhf_worker->module, WRITE_USER);
             return UHFWorkerEventAborted;
         }
@@ -322,15 +368,38 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
             m100_disable_write_mask(uhf_worker->module, WRITE_TID);
             return UHFWorkerEventAborted;
         }
+        if(targeted && furi_get_tick() >= deadline) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_TID);
+            return UHFWorkerEventAborted;
+        }
         if(rp_type == M100SuccessResponse) {
             m100_disable_write_mask(uhf_worker->module, WRITE_TID);
             break;
         }
     }
     while(m100_is_write_mask_enabled(uhf_worker->module, WRITE_EPC)) {
+        //The EPC bank's PC (Protocol Control) word encodes the EPC length in its
+        //top 5 bits. When the new EPC differs in length from the tag's current
+        //EPC we MUST write a matching PC or the tag backscatters the wrong length
+        //and becomes unreadable. Take the real tag's lower PC bits (NSI/UMI/XI/
+        //toggle) and overwrite the length field with the new EPC's word count.
+        uint16_t base_pc = uhf_tag_get_epc_pc(uhf_tag_des);
+        uint16_t new_words = uhf_tag_get_epc_size(uhf_tag_from) / 2;
+        //Never commit a zero-length EPC: that clears the tag and makes it
+        //undetectable. The caller validates length, but guard here too.
+        if(new_words == 0) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_EPC);
+            break;
+        }
+        uint16_t new_pc = (uint16_t)((base_pc & 0x07FF) | ((new_words & 0x1F) << 11));
+        uhf_tag_set_epc_pc(uhf_tag_from, new_pc);
         rp_type = m100_write_label_data_storage(
             uhf_worker->module, uhf_tag_from, uhf_tag_des, EPCBank, 0, uhf_worker->DefaultAP);
         if(uhf_worker->state == UHFWorkerStateStop) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_EPC);
+            return UHFWorkerEventAborted;
+        }
+        if(targeted && furi_get_tick() >= deadline) {
             m100_disable_write_mask(uhf_worker->module, WRITE_EPC);
             return UHFWorkerEventAborted;
         }
@@ -367,6 +436,10 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
         }
 
         if(uhf_worker->state == UHFWorkerStateStop) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_RFU);
+            return UHFWorkerEventAborted;
+        }
+        if(targeted && furi_get_tick() >= deadline) {
             m100_disable_write_mask(uhf_worker->module, WRITE_RFU);
             return UHFWorkerEventAborted;
         }
@@ -443,6 +516,7 @@ UHFWorker* uhf_worker_alloc() {
     uhf_worker->KillPwd = false;
     uhf_worker->AccessPwd = false;
     uhf_worker->DefaultAP = 0;
+    uhf_worker->Targeted = false;
     return uhf_worker;
 }
 

@@ -16,8 +16,6 @@ void uhf_reader_view_epc_draw_callback(Canvas* canvas, void* model) {
     char RssiStr[16];
     snprintf(RssiStr, sizeof(RssiStr), "RSSI:%ddBm", (int)MyModel->Rssi);
     canvas_draw_str_aligned(canvas, 128, 11, AlignRight, AlignBottom, RssiStr);
-    // Left-key save hint (bottom-left button)
-    elements_button_left(canvas, "Save");
 
     // EPC value — wrap at 20 chars per line (120px fits 128px display)
     const char* EpcStr = furi_string_get_cstr(MyModel->Epc);
@@ -45,9 +43,10 @@ void uhf_reader_view_epc_draw_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 70, 44, "PC:");
     canvas_draw_str(canvas, 88, 44, furi_string_get_cstr(MyModel->Pc));
 
-    // Action button hint (center) and the "More" button bottom-right.
+    // Bank browse ring: Left → User bank, Right → TID bank; center opens Actions.
+    elements_button_left(canvas, "Usr");
     elements_button_center(canvas, "Action");
-    elements_button_right(canvas, "More");
+    elements_button_right(canvas, "TID");
 }
 
 // ─── Navigation callbacks ─────────────────────────────────────────────────────
@@ -67,8 +66,12 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
 
     if(event->type != InputTypeShort) return false;
 
-    // Center (OK): open the Tag Action menu (Write / Lock / Kill).
+    // Center (OK): open the Tag Action menu (Update / Lock / Kill) for this
+    // in-memory scanned tag. Mark the menu context as "live" so it shows the
+    // unsaved action set and downstream views target this specific tag.
     if(event->key == InputKeyOk && App->NumberOfEpcsToRead > 0) {
+        App->ActionContext = ActionFromLive;
+        uhf_reader_build_tag_action_menu(App);
         view_set_previous_callback(
             submenu_get_view(App->SubmenuTagActions),
             uhf_reader_navigation_banks_to_epc_dump_callback);
@@ -76,17 +79,31 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
         return true;
     }
 
-    // Right (More): open the per-bank memory screens, starting at TID.
+    // Right: browse forward to the TID bank screen (next node in the ring).
     if(event->key == InputKeyRight && App->NumberOfEpcsToRead > 0) {
         with_view_model(
-            App->ViewBankMem, UHFRFIDTagModel * m, { m->CurrentBank = 0; }, false);
+            App->ViewBankMem,
+            UHFRFIDTagModel * m,
+            {
+                m->CurrentBank = 0;
+                m->VScrollLine = 0;
+            },
+            false);
         view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewBankMem);
         return true;
     }
 
-    // Left: save the currently displayed tag (all banks read so far).
+    // Left: browse backward to the User bank screen (previous node in the ring).
     if(event->key == InputKeyLeft && App->NumberOfEpcsToRead > 0) {
-        uhf_reader_begin_save_tag(App, App->ViewEpc, UHFReaderViewEpcDump);
+        with_view_model(
+            App->ViewBankMem,
+            UHFRFIDTagModel * m,
+            {
+                m->CurrentBank = 2;
+                m->VScrollLine = 0;
+            },
+            false);
+        view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewBankMem);
         return true;
     }
 
@@ -165,6 +182,9 @@ bool uhf_reader_view_epc_custom_event_callback(uint32_t event, void* context) {
                 furi_string_set_str(_model->Reserved, TempRes);
                 furi_string_set_str(_model->Crc, TempCrc);
                 furi_string_set_str(_model->Pc, TempPc);
+                _model->TidBankRead = true;
+                _model->UserBankRead = true;
+                _model->ResBankRead = true;
             },
             true);
 

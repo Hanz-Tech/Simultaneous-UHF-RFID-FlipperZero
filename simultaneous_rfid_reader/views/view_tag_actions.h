@@ -9,7 +9,7 @@ uint32_t uhf_reader_navigation_epc_info_callback(void* context);
 void uhf_reader_rename_text_updated(void* context);
 
 uint32_t uhf_reader_navigation_tag_action_exit_callback(void* context);
-
+void uhf_reader_build_tag_action_menu(UHFReaderApp* App);
 void view_tag_actions_alloc(UHFReaderApp* App);
 
 void view_tag_actions_free(UHFReaderApp* App);
