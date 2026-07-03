@@ -1,8 +1,34 @@
-# Flipper Zero UHF RFID App v1.1.2
-Now available on the official Flipper Zero [app catalog](https://github.com/flipperdevices/flipper-application-catalog)!
+# Flipper Zero UHF RFID App 
 
-## Please Read This!
-If you are unfamilar with the app, please take the time to read through the README as it contains all relevant instructions. Please open a GitHub Issue for any bugs or feature requests. Join [this](https://discord.com/channels/740930220399525928/1136167977708957737) discord channel to talk with other UHF RFID enthusiasts and to track information or updates on the app!
+**Please note that this is a fork of the original app from @haffnerriley with new features for YRM100X UHF Reader**
+
+### New in v1.2.0
+
+#### Multi-tag reading (YRM100)
+- Read and view up to **50 simultaneous UHF RFID tags** with live EPC list updates during scan
+- Cycle through detected tags with **Up / Down** on the scan screen
+
+#### Per-bank memory screens (YRM100)
+- From the EPC dump screen, press **Right (More)** to enter the per-bank memory screens
+- Cycle through **TID → Reserved → User** banks with Right; wraps back to the EPC dump
+- Press **OK** to read the currently shown bank from the selected tag
+- **Up / Down** scrolls long hex dumps (e.g. large User memory)
+- Reserved bank screen shows the raw hex plus decoded **Kill** and **Access** passwords as scrollable lines
+
+#### EPC dump screen rework
+- EPC wraps at 20 chars/line, CRC and PC on one row, RSSI with dBm unit
+- **Left = Save**, **Center = Action** (Write / Lock / Kill), **Right = More** (→ bank screens)
+
+#### Save system
+- Save a tag from the scan screen (**Left**), EPC dump (**Left**)
+
+#### Configuration
+- Set power level from 0 - 27 dBm, in increment of 1 dBm
+- Set Session S0,S1,S2,S3
+- Set Target A/B
+- Flipper will load the current configuration in the YRM100 reader during first connect instead of using default 
+- Flipper will check the ACK from the YRM100 reader when setting configuration
+
 
 ## Overview
 This app is designed to work with the M6e Nano, M7E Hecto, and YRM100 UHF RFID Readers and the Flipper Zero. This app supports reading up to 150 tags per second (M6E & M7E only), writing to tags (EPC, TID, Reserved, and User Memory Banks), viewing all tag information, saving tags, and more! 
@@ -11,11 +37,19 @@ This app is designed to work with the M6e Nano, M7E Hecto, and YRM100 UHF RFID R
 
 ![Read Menu](images/read-screen.png)
 
-**Please note that the EPC value scrolls across the screen.
+![EPC](images/epc.png)
+
+![tid](images/tid.png)
+
+![reserved](images/reserved.png)
+
+![user_mem](images/user_mem.png)
+
+![config_1](images/config_1.png)
+
+![config_2](images/config_2.png)
 
 ![Write Menu](images/write-screen.png)
-
-![Tag Info Screen](images/tag-data-screen.png)
 
 **Please note that all values scroll across the screen.
 
@@ -23,13 +57,15 @@ This app is designed to work with the M6e Nano, M7E Hecto, and YRM100 UHF RFID R
 
 ![Kill Tag Screen](images/kill-screen.png)
 
+
+
+
 ## Special Note for M6E & M7E Users
 Currently, not all features work for the M6E & M7E. In the next release, support for locking, killing, and reading PC/CRC will be added for the M6E & M7E. Stay on the first version of the app to have a more stable version of the app. 
 
 ## Coming Soon
  In the future, I plan on developing a custom pcb that utilizes the M6e Nano module offering a powerful UHF Reader that plugs right into the Flipper Zero! Some other feature enhancements to the configuration menu will also be added in the future including antenna selection, saving configuration menu settings, and selecting/detecting/setting custom UHF RFID tag types (adjusting read/write size for memory banks).
-
-
+ 
 ## Features
 - Read and view up to 150 UHF RFID tags at once (M6E & M7E Only)!
   - EPC, TID, User, and Reserved Memory Banks

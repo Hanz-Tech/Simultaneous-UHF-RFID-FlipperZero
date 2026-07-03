@@ -6,3 +6,4 @@ dist/*
 .env
 .ufbt
 .agents
+.DS_Store
