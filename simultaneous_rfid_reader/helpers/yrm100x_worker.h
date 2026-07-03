@@ -54,6 +54,10 @@ typedef struct UHFWorker {
     uint32_t DefaultAP;
     // Which bank a single-bank read (UHFWorkerStateReadSingleBank) should fetch.
     BankType TargetBank;
+    // When true, a WriteSingle operation targets the specific tag whose EPC is
+    // preloaded into SelectedTag (no first-responder poll) and aborts after a
+    // 10-second deadline if that tag never answers. Used by the unsaved path.
+    bool Targeted;
     //uint32_t write_ap;
     void* ctx;
 } UHFWorker;

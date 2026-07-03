@@ -67,8 +67,12 @@ bool uhf_reader_view_epc_input_callback(InputEvent* event, void* context) {
 
     if(event->type != InputTypeShort) return false;
 
-    // Center (OK): open the Tag Action menu (Write / Lock / Kill).
+    // Center (OK): open the Tag Action menu (Update / Lock / Kill) for this
+    // in-memory scanned tag. Mark the menu context as "live" so it shows the
+    // unsaved action set and downstream views target this specific tag.
     if(event->key == InputKeyOk && App->NumberOfEpcsToRead > 0) {
+        App->ActionContext = ActionFromLive;
+        uhf_reader_build_tag_action_menu(App);
         view_set_previous_callback(
             submenu_get_view(App->SubmenuTagActions),
             uhf_reader_navigation_banks_to_epc_dump_callback);
@@ -165,6 +169,9 @@ bool uhf_reader_view_epc_custom_event_callback(uint32_t event, void* context) {
                 furi_string_set_str(_model->Reserved, TempRes);
                 furi_string_set_str(_model->Crc, TempCrc);
                 furi_string_set_str(_model->Pc, TempPc);
+                _model->TidBankRead = true;
+                _model->UserBankRead = true;
+                _model->ResBankRead = true;
             },
             true);
 

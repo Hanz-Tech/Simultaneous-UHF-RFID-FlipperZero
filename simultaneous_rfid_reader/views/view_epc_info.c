@@ -237,9 +237,11 @@ void uhf_reader_view_epc_info_enter_callback(void* context) {
 */
 void uhf_reader_view_epc_info_exit_callback(void* context) {
     UHFReaderApp* App = (UHFReaderApp*)context;
-    furi_timer_stop(App->Timer);
-    furi_timer_free(App->Timer);
-    App->Timer = NULL;
+    if(App->Timer) {
+        furi_timer_stop(App->Timer);
+        furi_timer_free(App->Timer);
+        App->Timer = NULL;
+    }
 }
 
 /**

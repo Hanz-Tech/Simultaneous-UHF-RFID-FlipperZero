@@ -132,6 +132,14 @@ typedef struct VariableItemLock {
     bool locked;
 } VariableItemLock;
 
+//Context describing which path opened the shared Tag Action menu.
+//ActionFromLive  -> unsaved, in-memory scanned tag (Update/Lock/Kill, targeted by EPC)
+//ActionFromSaved -> saved tag from Saved_EPCs.txt (full menu, single-poll writes)
+typedef enum {
+    ActionFromLive,
+    ActionFromSaved,
+} UHFActionContext;
+
 //The main UHFReaderApp Struct
 typedef struct {
     ViewDispatcher* ViewDispatcher;
@@ -251,6 +259,14 @@ typedef struct {
     bool DeepReading;
     bool DeepReadDone;
     bool DeepReadTimerExpired;
+
+    //Which path opened the shared Tag Action menu (live vs saved).
+    UHFActionContext ActionContext;
+
+    //True on a fresh entry into the Write/Update view from the action menu, so
+    //the enter callback only resets the bank selection once (not when returning
+    //from the value-entry keyboard).
+    bool WriteMenuFreshEntry;
 
     FuriTimer* Timer;
 
@@ -372,6 +388,14 @@ typedef struct {
     FuriString* Crc;
     FuriString* Pc;
     FuriString* SettingKillPwd;
+    //Bank availability for the Update menu (live tags grey out unread banks)
+    bool TidAvail;
+    bool UserAvail;
+    bool ResAvail;
+    //True once the user has picked a bank + entered a value (shows Write button)
+    bool BankChosen;
+    //True when this is a targeted "Update" of a specific scanned tag (live)
+    bool IsUpdateMode;
 } UHFReaderWriteModel;
 
 //Model for the delete screen
@@ -407,4 +431,9 @@ typedef struct {
     // and the vertical scroll offset (in wrapped lines) for long content.
     uint32_t CurrentBank;
     uint32_t VScrollLine;
+    // Whether each memory bank has been read for this live tag. Drives the
+    // Update menu's grey-out (EPC is always available from the scan).
+    bool TidBankRead;
+    bool UserBankRead;
+    bool ResBankRead;
 } UHFRFIDTagModel;

@@ -11,13 +11,92 @@ uint32_t uhf_reader_navigation_kill_callback(void* context) {
     return UHFReaderViewKill;
 }
 
+//Safely set a FuriString from a (possibly-NULL) heap string returned by an
+//extract_* helper, freeing the heap string. Sets empty on NULL to avoid a
+//furi_string_set(str, NULL) crash.
+static void uhf_set_from_extracted(FuriString* Dest, char* Extracted) {
+    if(Extracted != NULL) {
+        furi_string_set_str(Dest, Extracted);
+        free(Extracted);
+    } else {
+        furi_string_set_str(Dest, "");
+    }
+}
+
+/**
+ * @brief      Populate the ViewWrite model from the in-memory live scanned tag.
+ * @details    Used for the unsaved (ActionFromLive) path so Update/Lock/Kill
+ *             operate on the specific tag currently displayed in the EPC dump,
+ *             never touching Saved_EPCs.txt.
+ * @param      App  The UHFReaderApp object.
+*/
+static void uhf_reader_fetch_live_tag(UHFReaderApp* App) {
+    //Copy the live tag fields out of the EPC-dump model first, then populate the
+    //write model. This avoids holding two view-model locks at once.
+    FuriString* Epc = furi_string_alloc();
+    FuriString* Tid = furi_string_alloc();
+    FuriString* Res = furi_string_alloc();
+    FuriString* Mem = furi_string_alloc();
+    FuriString* Pc = furi_string_alloc();
+    FuriString* Crc = furi_string_alloc();
+
+    with_view_model(
+        App->ViewEpc,
+        UHFRFIDTagModel * Live,
+        {
+            furi_string_set(Epc, Live->Epc);
+            furi_string_set(Tid, Live->Tid);
+            furi_string_set(Res, Live->Reserved);
+            furi_string_set(Mem, Live->User);
+            furi_string_set(Pc, Live->Pc);
+            furi_string_set(Crc, Live->Crc);
+        },
+        false);
+
+    furi_string_set(App->EpcToWrite, Epc);
+    //Unsaved tags have no name; build a readable placeholder from the EPC tail.
+    const char* EpcStr = furi_string_get_cstr(Epc);
+    size_t Len = strlen(EpcStr);
+    const char* Tail = Len > 8 ? EpcStr + (Len - 8) : EpcStr;
+    furi_string_printf(App->EpcName, "Tag_%s", Tail);
+
+    with_view_model(
+        App->ViewWrite,
+        UHFReaderWriteModel * Model,
+        {
+            furi_string_set(Model->EpcName, App->EpcName);
+            furi_string_set(Model->EpcValue, Epc);
+            furi_string_set(Model->TidValue, Tid);
+            furi_string_set(Model->ResValue, Res);
+            furi_string_set(Model->MemValue, Mem);
+            furi_string_set(Model->Pc, Pc);
+            furi_string_set(Model->Crc, Crc);
+        },
+        true);
+
+    furi_string_free(Epc);
+    furi_string_free(Tid);
+    furi_string_free(Res);
+    furi_string_free(Mem);
+    furi_string_free(Pc);
+    furi_string_free(Crc);
+}
+
 /**
  * @brief      Fetch selected tag's info
- * @details    This function populates the app's tag variables based on the selected saved tag 
+ * @details    Populates the ViewWrite model. For ActionFromLive it reads the
+ *             in-memory scanned tag; for ActionFromSaved it reads Saved_EPCs.txt
+ *             by SelectedTagIndex. All file extracts are NULL-guarded.
  * @param      context  The context - The App
 */
 void uhf_reader_fetch_selected_tag(void* context) {
     UHFReaderApp* App = (UHFReaderApp*)context;
+
+    //Unsaved live tag: use the in-memory model, never the saved file.
+    if(App->ActionContext == ActionFromLive) {
+        uhf_reader_fetch_live_tag(App);
+        return;
+    }
 
     //Allocate space for the FuriStrings used
     FuriString* TempStr = furi_string_alloc();
@@ -31,11 +110,12 @@ void uhf_reader_fetch_selected_tag(void* context) {
         furi_string_printf(TempStr, "Tag%ld", App->SelectedTagIndex);
         if(!flipper_format_read_string(App->EpcFile, furi_string_get_cstr(TempStr), TempTag)) {
             FURI_LOG_D(TAG, "Could not read tag %ld data", App->SelectedTagIndex);
+            flipper_format_file_close(App->EpcFile);
         } else {
             //Grab the saved uhf tag info from the saved epcs file
             const char* InputString = furi_string_get_cstr(TempTag);
-            furi_string_set(App->EpcToWrite, extract_epc(InputString));
-            furi_string_set(App->EpcName, extract_name(InputString));
+            uhf_set_from_extracted(App->EpcToWrite, extract_epc(InputString));
+            uhf_set_from_extracted(App->EpcName, extract_name(InputString));
 
             //Set the write model uhf tag values accordingly
             bool redraw = true;
@@ -43,12 +123,12 @@ void uhf_reader_fetch_selected_tag(void* context) {
                 App->ViewWrite,
                 UHFReaderWriteModel * Model,
                 {
-                    furi_string_set(Model->EpcValue, extract_epc(InputString));
-                    furi_string_set(Model->TidValue, extract_tid(InputString));
-                    furi_string_set(Model->ResValue, extract_res(InputString));
-                    furi_string_set(Model->MemValue, extract_mem(InputString));
-                    furi_string_set(Model->Pc, extract_pc(InputString));
-                    furi_string_set(Model->Crc, extract_crc(InputString));
+                    uhf_set_from_extracted(Model->EpcValue, extract_epc(InputString));
+                    uhf_set_from_extracted(Model->TidValue, extract_tid(InputString));
+                    uhf_set_from_extracted(Model->ResValue, extract_res(InputString));
+                    uhf_set_from_extracted(Model->MemValue, extract_mem(InputString));
+                    uhf_set_from_extracted(Model->Pc, extract_pc(InputString));
+                    uhf_set_from_extracted(Model->Crc, extract_crc(InputString));
                 },
                 redraw);
             //Close the file
@@ -61,8 +141,50 @@ void uhf_reader_fetch_selected_tag(void* context) {
 }
 
 /**
- * @brief      Callback for the uhf worker for writing.
- * @details    This function is called when the uhf worker is started for writing.
+ * @brief      Configure the worker's write targeting for the current context.
+ * @details    ActionFromLive -> Targeted: preload SelectedTag with the scanned
+ *             tag's current EPC/PC/CRC so the write addresses that exact tag
+ *             (and aborts after 10s if absent). ActionFromSaved -> single-poll.
+ *             Call immediately before uhf_worker_start(...WriteSingle...).
+ * @param      context  The context - The App
+*/
+void uhf_reader_prepare_write_target(void* context) {
+    UHFReaderApp* App = (UHFReaderApp*)context;
+
+    if(App->ActionContext != ActionFromLive) {
+        App->YRM100XWorker->Targeted = false;
+        return;
+    }
+
+    App->YRM100XWorker->Targeted = true;
+    UHFTag* Target = App->YRM100XWorker->SelectedTag;
+    uhf_tag_reset(Target);
+
+    uint8_t EpcBytes[EPC_MAX_BANK_SIZE] = {0};
+    size_t EpcLen = 0;
+    uint16_t PcArr[2] = {0};
+    size_t PcLen = 0;
+    uint16_t CrcArr[2] = {0};
+    size_t CrcLen = 0;
+
+    with_view_model(
+        App->ViewWrite,
+        UHFReaderWriteModel * Model,
+        {
+            hex_string_to_bytes(furi_string_get_cstr(Model->EpcValue), EpcBytes, &EpcLen);
+            hex_string_to_uint16(furi_string_get_cstr(Model->Pc), PcArr, &PcLen);
+            hex_string_to_uint16(furi_string_get_cstr(Model->Crc), CrcArr, &CrcLen);
+        },
+        false);
+
+    uhf_tag_set_epc(Target, EpcBytes, EpcLen * sizeof(uint8_t));
+    uhf_tag_set_epc_pc(Target, PcArr[0]);
+    uhf_tag_set_epc_crc(Target, CrcArr[0]);
+}
+
+/**
+ * @brief      Callback for the uhf worker for killing.
+ * @details    This function is called when the uhf worker is started for killing.
  * @param      event  The UHFWorkerEvent - UHFReaderApp object.
  * @param      context  The context - UHFReaderApp object.
 */
@@ -178,6 +300,8 @@ void uhf_reader_kill_password_updated(void* context) {
                     m100_enable_write_mask(App->YRM100XWorker->module, WRITE_RFU);
                     App->YRM100XWorker->KillPwd = true;
 
+                    //Target the specific scanned tag (live) or single-poll (saved).
+                    uhf_reader_prepare_write_target(App);
                     uhf_worker_start(
                         App->YRM100XWorker,
                         UHFWorkerStateWriteSingle,

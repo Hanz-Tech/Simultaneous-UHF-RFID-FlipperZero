@@ -123,6 +123,8 @@ void uhf_reader_access_password_updated(void* context) {
                     uhf_tag_set_epc_crc(TempTag, combinedCrc);
                     App->YRM100XWorker->AccessPwd = true;
 
+                    //Target the specific scanned tag (live) or single-poll (saved).
+                    uhf_reader_prepare_write_target(App);
                     uhf_worker_start(
                         App->YRM100XWorker,
                         UHFWorkerStateWriteSingle,

@@ -26,7 +26,9 @@ void uhf_reader_epc_value_text_updated(void* context) {
         UHFReaderWriteModel * Model,
         { 
             
-            furi_string_set_str(Model->NewEpcValue, App->TempSaveBuffer);},
+            furi_string_set_str(Model->NewEpcValue, App->TempSaveBuffer);
+            //A value has been entered for the chosen bank: reveal the Write button.
+            Model->BankChosen = true;},
             
         redraw);
 
@@ -52,55 +54,57 @@ void uhf_reader_view_write_enter_callback(void* context) {
     //Grab the period for the timer
     uint32_t Period = furi_ms_to_ticks(200);
     UHFReaderApp* App = (UHFReaderApp*)context;
-    
-    //Allocate space for the FuriStrings used
-    FuriString* TempStr = furi_string_alloc();
-    FuriString* TempTag = furi_string_alloc();
 
-    //Open the saved epcs file to extract the uhf tag info
-    if(!flipper_format_file_open_existing(App->EpcFile, APP_DATA_PATH("Saved_EPCs.txt"))) {
-        FURI_LOG_E(TAG, "Failed to open Saved file");
-        flipper_format_file_close(App->EpcFile);
-    } else {
-        furi_string_printf(TempStr, "Tag%ld", App->SelectedTagIndex);
-        if(!flipper_format_read_string(App->EpcFile, furi_string_get_cstr(TempStr), TempTag)) {
-            FURI_LOG_D(TAG, "Could not read tag %ld data", App->SelectedTagIndex);
-        } else {
-            //Grab the saved uhf tag info from the saved epcs file
-            const char* InputString = furi_string_get_cstr(TempTag);
-            furi_string_set(App->EpcToWrite, extract_epc(InputString));
-            furi_string_set(App->EpcName, extract_name(InputString));
-            
-            //Set the write model uhf tag values accordingly
-            bool redraw = true;
-            with_view_model(
-                App->ViewWrite,
-                UHFReaderWriteModel * Model,
-                {
-                    furi_string_set(Model->EpcValue, extract_epc(InputString));
-                    furi_string_set(Model->TidValue, extract_tid(InputString));
-                    furi_string_set(Model->ResValue, extract_res(InputString));
-                    furi_string_set(Model->MemValue, extract_mem(InputString));
-                    furi_string_set(Model->Pc, extract_pc(InputString));
-                    furi_string_set(Model->Crc, extract_crc(InputString));
-                },
-                redraw);
-            //Close the file
-            flipper_format_file_close(App->EpcFile);
-        }
+    //Populate the write model from the live scanned tag (ActionFromLive) or the
+    //saved file (ActionFromSaved). This is NULL-safe and never leaks a handle.
+    uhf_reader_fetch_selected_tag(App);
+
+    //Determine per-bank availability. For a live (unsaved) tag we only allow the
+    //non-EPC banks once they've actually been deep-read; EPC is always available
+    //from the scan. For a saved tag every bank is selectable.
+    bool TidAvail = true;
+    bool UserAvail = true;
+    bool ResAvail = true;
+    bool UpdateMode = (App->ActionContext == ActionFromLive);
+    if(UpdateMode) {
+        with_view_model(
+            App->ViewEpc,
+            UHFRFIDTagModel * Live,
+            {
+                TidAvail = Live->TidBankRead;
+                UserAvail = Live->UserBankRead;
+                ResAvail = Live->ResBankRead;
+            },
+            false);
     }
+    with_view_model(
+        App->ViewWrite,
+        UHFReaderWriteModel * Model,
+        {
+            Model->IsUpdateMode = UpdateMode;
+            Model->TidAvail = TidAvail;
+            Model->UserAvail = UserAvail;
+            Model->ResAvail = ResAvail;
+            //Only clear the chosen bank on a fresh entry from the action menu.
+            //Returning from the value-entry keyboard must keep the selection so
+            //the Write/Update button stays visible.
+            if(App->WriteMenuFreshEntry) {
+                Model->BankChosen = false;
+                furi_string_set_str(Model->WriteFunction, WRITE_SELECT_BANK);
+            }
+        },
+        false);
+    App->WriteMenuFreshEntry = false;
 
     //Start the timer
-    furi_assert(App->Timer == NULL);
-    App->Timer =
-        furi_timer_alloc(uhf_reader_view_write_timer_callback, FuriTimerTypePeriodic, context);
+    if(App->Timer == NULL) {
+        App->Timer = furi_timer_alloc(
+            uhf_reader_view_write_timer_callback, FuriTimerTypePeriodic, context);
+    }
     furi_timer_start(App->Timer, Period);
 
-    //Setting default reading states and freeing FuriStrings used
+    //Setting default reading states
     App->IsWriting = false;
-
-    furi_string_free(TempTag);
-    furi_string_free(TempStr);
 }
 
 /**
@@ -110,9 +114,11 @@ void uhf_reader_view_write_enter_callback(void* context) {
 */
 void uhf_reader_view_write_exit_callback(void* context) {
     UHFReaderApp* App = (UHFReaderApp*)context;
-    furi_timer_stop(App->Timer);
-    furi_timer_free(App->Timer);
-    App->Timer = NULL;
+    if(App->Timer) {
+        furi_timer_stop(App->Timer);
+        furi_timer_free(App->Timer);
+        App->Timer = NULL;
+    }
 }
 
 /**
@@ -289,6 +295,17 @@ bool uhf_reader_view_write_custom_event_callback(uint32_t event, void* context) 
             return true;
         }
 
+        //No bank has been selected yet - the Write button is hidden, so ignore OK.
+        bool BankChosen = false;
+        with_view_model(
+            App->ViewWrite,
+            UHFReaderWriteModel * Model,
+            { BankChosen = Model->BankChosen; },
+            false);
+        if(!BankChosen) {
+            return true;
+        }
+
         with_view_model(
             App->ViewWrite,
             UHFReaderWriteModel * Model,
@@ -314,6 +331,10 @@ bool uhf_reader_view_write_custom_event_callback(uint32_t event, void* context) 
                         uart_helper_send_string(App->UartHelper, Model->NewEpcValue);
                     }
                 } else {
+                    //Set true if the requested EPC write is rejected as invalid
+                    //(empty, misaligned, or over 96 bits) so we never brick the tag.
+                    bool epc_write_invalid = false;
+
                     // Resetting the dynamically allocated arrays to zero
                     uhf_reader_fetch_selected_tag(App);
                     memset(App->EpcBytes, 0, 12 * sizeof(uint8_t));
@@ -349,13 +370,40 @@ bool uhf_reader_view_write_custom_event_callback(uint32_t event, void* context) 
 
                     if(furi_string_equal(Model->WriteFunction, WRITE_EPC_VAL) &&
                        Model->NewEpcValue != NULL) {
-                        hex_string_to_bytes(
-                            App->TempSaveBuffer, App->EpcBytes, &App->EpcBytesLen);
-                        
-                        uhf_tag_set_epc(
-                            App->YRM100XWorker->NewTag, (uint8_t*)App->EpcBytes, App->EpcBytesLen * sizeof(uint8_t));
+                        //EPC memory is word-organized, so the entry must be a whole
+                        //number of 16-bit words (a multiple of 4 hex chars). Auto-pad
+                        //with leading zeros to the next word boundary so a short entry
+                        //still writes cleanly (e.g. "123" -> "0123", "12345" ->
+                        //"00012345"). Leading zeros preserve the numeric value.
+                        size_t epc_rem = furi_string_size(Model->NewEpcValue) % 4;
+                        if(epc_rem != 0) {
+                            FuriString* padded = furi_string_alloc();
+                            for(size_t i = 0; i < (4 - epc_rem); i++) {
+                                furi_string_push_back(padded, '0');
+                            }
+                            furi_string_cat(padded, Model->NewEpcValue);
+                            furi_string_set(Model->NewEpcValue, padded);
+                            furi_string_free(padded);
+                        }
 
-                        m100_enable_write_mask(App->YRM100XWorker->module, WRITE_EPC);
+                        hex_string_to_bytes(
+                            furi_string_get_cstr(Model->NewEpcValue), App->EpcBytes, &App->EpcBytesLen);
+
+                        //A valid EPC is a whole number of 16-bit words (even byte
+                        //count), non-empty, and at most 96 bits (12 bytes). Writing a
+                        //zero-length or misaligned EPC corrupts the tag (empty EPC,
+                        //undetectable), so refuse it instead of writing.
+                        if(App->EpcBytesLen == 0 || (App->EpcBytesLen % 2) != 0 ||
+                           App->EpcBytesLen > 12) {
+                            epc_write_invalid = true;
+                        } else {
+                            uhf_tag_set_epc(
+                                App->YRM100XWorker->NewTag,
+                                (uint8_t*)App->EpcBytes,
+                                App->EpcBytesLen * sizeof(uint8_t));
+
+                            m100_enable_write_mask(App->YRM100XWorker->module, WRITE_EPC);
+                        }
                     } else {
                         hex_string_to_bytes(
                             furi_string_get_cstr(Model->EpcValue), App->EpcBytes, &App->EpcBytesLen);
@@ -415,16 +463,25 @@ bool uhf_reader_view_write_custom_event_callback(uint32_t event, void* context) 
                     App->YRM100XWorker->KillPwd = true;
                     App->YRM100XWorker->AccessPwd = true; 
                     
-                    App->IsWriting = true;
+                    if(epc_write_invalid) {
+                        //Reject the write outright so the tag is left untouched.
+                        m100_disable_write_mask(App->YRM100XWorker->module, WRITE_EPC);
+                        App->IsWriting = false;
+                        Model->IsWriting = false;
+                        furi_string_set_str(Model->WriteStatus, "Invalid EPC length");
+                        notification_message(App->Notifications, &sequence_error);
+                    } else {
+                        App->IsWriting = true;
 
-
-                    
-                    uhf_worker_start(
-                        App->YRM100XWorker,
-                        UHFWorkerStateWriteSingle,
-                        uhf_write_tag_worker_callback,
-                        App);
-                    notification_message(App->Notifications, &uhf_sequence_blink_start_cyan);
+                        //Target the specific scanned tag (live) or single-poll (saved).
+                        uhf_reader_prepare_write_target(App);
+                        uhf_worker_start(
+                            App->YRM100XWorker,
+                            UHFWorkerStateWriteSingle,
+                            uhf_write_tag_worker_callback,
+                            App);
+                        notification_message(App->Notifications, &uhf_sequence_blink_start_cyan);
+                    }
                 }
             },
             redraw);
@@ -444,40 +501,40 @@ bool uhf_reader_view_write_custom_event_callback(uint32_t event, void* context) 
 */
 void uhf_reader_view_write_draw_callback(Canvas* canvas, void* model) {
     UHFReaderWriteModel* MyModel = (UHFReaderWriteModel*)model;
-    FuriString* xstr = furi_string_alloc();
 
     //Clearing the canvas, setting the color, font and content displayed.
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 4, 11, "           Write Menu:");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 0, 33, "Write Mode:");
 
-    //Displaying the current write mode selected
-    canvas_draw_str(canvas, 51, 33, furi_string_get_cstr(MyModel->WriteFunction));
+    //D-pad bank picker rendered with the native black, arrow-glyph buttons:
+    //  Up (top-left)  = EPC        Down (top-right)  = Reserved
+    //  Left (bot-left)= TID        Right (bot-right) = User
+    //Banks that were never read on a live tag are simply not offered.
+    elements_button_up(canvas, "EPC");
+    if(MyModel->ResAvail) elements_button_down(canvas, "Res");
+    if(MyModel->TidAvail) elements_button_left(canvas, "TID");
+    if(MyModel->UserAvail) elements_button_right(canvas, "User");
 
-    //Display the CRC
-    canvas_draw_str(canvas, 4, 22, "CRC:");
+    //Center of the screen: title and the currently selected bank (or a prompt).
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(
+        canvas, 64, 26, AlignCenter, AlignBottom, MyModel->IsUpdateMode ? "Update" : "Write");
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str_aligned(
+        canvas,
+        64,
+        38,
+        AlignCenter,
+        AlignBottom,
+        MyModel->BankChosen ? furi_string_get_cstr(MyModel->WriteFunction) : "Pick a bank");
 
-    canvas_draw_str(canvas, 28, 22, furi_string_get_cstr(MyModel->Crc));
-
-    //Display the PC
-    canvas_draw_str(canvas, 70, 22, "PC:");
-    canvas_draw_str(canvas, 90, 22, furi_string_get_cstr(MyModel->Pc));
-
-    //Display the current write status
-    canvas_draw_str(canvas, 0, 44, "Write Status: ");
-    canvas_draw_str(canvas, 65, 44, furi_string_get_cstr(MyModel->WriteStatus));
-
-    //Display the write button
-    if(!MyModel->IsWriting) {
-        elements_button_center(canvas, "Write");
-
-    } else {
+    //Display the action button only once a bank has been chosen (Cancel while writing).
+    if(MyModel->IsWriting) {
         elements_button_center(canvas, "Cancel");
+    } else if(MyModel->BankChosen) {
+        elements_button_center(canvas, MyModel->IsUpdateMode ? "Update" : "Write");
     }
-    furi_string_free(xstr);
 }
 
 /**
@@ -492,15 +549,25 @@ bool uhf_reader_view_write_input_callback(InputEvent* event, void* context) {
 
     //Handle the short input types
     if(event->type == InputTypeShort) {
-        //If the left button is pressed, then pull up the EPC value and keyboard
-        if(event->key == InputKeyLeft && !App->IsWriting) {
+        //Read the current per-bank availability so greyed-out banks can't be edited.
+        bool TidAvail = true, UserAvail = true, ResAvail = true;
+        with_view_model(
+            App->ViewWrite,
+            UHFReaderWriteModel * Model,
+            {
+                TidAvail = Model->TidAvail;
+                UserAvail = Model->UserAvail;
+                ResAvail = Model->ResAvail;
+            },
+            false);
+
+        //Up -> EPC bank (always available from the scan)
+        if(event->key == InputKeyUp && !App->IsWriting) {
             text_input_set_header_text(App->EpcWrite, "EPC Value");
 
             bool redraw = false;
             with_view_model(
                 App->ViewWrite,
-
-                //Store the new epc value and mark the write function as the epc selection
                 UHFReaderWriteModel * Model,
                 {
                     strncpy(
@@ -511,9 +578,6 @@ bool uhf_reader_view_write_input_callback(InputEvent* event, void* context) {
                 },
                 redraw);
 
-            // Configure the text input
-            
-
             bool clear_previous_text = false;
             text_input_set_result_callback(
                 App->EpcWrite,
@@ -528,80 +592,16 @@ bool uhf_reader_view_write_input_callback(InputEvent* event, void* context) {
             return true;
         }
 
-        //If the right button is pressed, then display the reserved memory bank and display the keyboard
-        else if(event->key == InputKeyRight && !App->IsWriting) {
-            text_input_set_header_text(App->EpcWrite, "Reserved Memory Bank");
+        //Left -> TID bank (greyed until the bank has been read on a live tag)
+        else if(event->key == InputKeyLeft && !App->IsWriting) {
+            if(!TidAvail) {
+                notification_message(App->Notifications, &sequence_error);
+                return true;
+            }
+            text_input_set_header_text(App->EpcWrite, "TID Value");
             bool redraw = false;
             with_view_model(
                 App->ViewWrite,
-
-                //Store the modified value for the reserved memory bank
-                UHFReaderWriteModel * Model,
-                {
-                    strncpy(
-                        App->TempSaveBuffer,
-                        furi_string_get_cstr(Model->ResValue),
-                        App->TempBufferSaveSize);
-                    furi_string_set_str(Model->WriteFunction, WRITE_RES_MEM);
-                },
-                redraw);
-
-            // Configure the text input
-            bool clear_previous_text = false;
-            text_input_set_result_callback(
-                App->EpcWrite,
-                uhf_reader_epc_value_text_updated,
-                App,
-                App->TempSaveBuffer,
-                App->TempBufferSaveSize,
-                clear_previous_text);
-            view_set_previous_callback(
-                text_input_get_view(App->EpcWrite), uhf_reader_navigation_write_callback);
-            view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcWriteInput);
-            return true;
-        }
-
-        //If the up button is pressed, then display the user memory bank and keyboard
-        else if(event->key == InputKeyUp && !App->IsWriting) {
-            text_input_set_header_text(App->EpcWrite, "User Memory Bank");
-            bool redraw = false;
-            with_view_model(
-                App->ViewWrite,
-
-                //Store the modified user memory value
-                UHFReaderWriteModel * Model,
-                {
-                    strncpy(
-                        App->TempSaveBuffer,
-                        furi_string_get_cstr(Model->MemValue),
-                        App->TempBufferSaveSize);
-                    furi_string_set(Model->WriteFunction, WRITE_USR_MEM);
-                },
-                redraw);
-
-            // Configure the text input
-            bool clear_previous_text = false;
-            text_input_set_result_callback(
-                App->EpcWrite,
-                uhf_reader_epc_value_text_updated,
-                App,
-                App->TempSaveBuffer,
-                App->TempBufferSaveSize,
-                clear_previous_text);
-            view_set_previous_callback(
-                text_input_get_view(App->EpcWrite), uhf_reader_navigation_write_callback);
-            view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcWriteInput);
-            return true;
-        }
-
-        //If the down button is pressed, then display the TID memory bank and the keyboard
-        else if(event->key == InputKeyDown && !App->IsWriting) {
-            text_input_set_header_text(App->EpcWrite, "TID Memory Bank");
-            bool redraw = false;
-            with_view_model(
-                App->ViewWrite,
-
-                //Store the modified TID value
                 UHFReaderWriteModel * Model,
                 {
                     strncpy(
@@ -612,7 +612,74 @@ bool uhf_reader_view_write_input_callback(InputEvent* event, void* context) {
                 },
                 redraw);
 
-            // Configure the text input
+            bool clear_previous_text = false;
+            text_input_set_result_callback(
+                App->EpcWrite,
+                uhf_reader_epc_value_text_updated,
+                App,
+                App->TempSaveBuffer,
+                App->TempBufferSaveSize,
+                clear_previous_text);
+            view_set_previous_callback(
+                text_input_get_view(App->EpcWrite), uhf_reader_navigation_write_callback);
+            view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcWriteInput);
+            return true;
+        }
+
+        //Right -> User bank (greyed until the bank has been read on a live tag)
+        else if(event->key == InputKeyRight && !App->IsWriting) {
+            if(!UserAvail) {
+                notification_message(App->Notifications, &sequence_error);
+                return true;
+            }
+            text_input_set_header_text(App->EpcWrite, "User Memory Bank");
+            bool redraw = false;
+            with_view_model(
+                App->ViewWrite,
+                UHFReaderWriteModel * Model,
+                {
+                    strncpy(
+                        App->TempSaveBuffer,
+                        furi_string_get_cstr(Model->MemValue),
+                        App->TempBufferSaveSize);
+                    furi_string_set_str(Model->WriteFunction, WRITE_USR_MEM);
+                },
+                redraw);
+
+            bool clear_previous_text = false;
+            text_input_set_result_callback(
+                App->EpcWrite,
+                uhf_reader_epc_value_text_updated,
+                App,
+                App->TempSaveBuffer,
+                App->TempBufferSaveSize,
+                clear_previous_text);
+            view_set_previous_callback(
+                text_input_get_view(App->EpcWrite), uhf_reader_navigation_write_callback);
+            view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewEpcWriteInput);
+            return true;
+        }
+
+        //Down -> Reserved bank (greyed until the bank has been read on a live tag)
+        else if(event->key == InputKeyDown && !App->IsWriting) {
+            if(!ResAvail) {
+                notification_message(App->Notifications, &sequence_error);
+                return true;
+            }
+            text_input_set_header_text(App->EpcWrite, "Reserved Memory Bank");
+            bool redraw = false;
+            with_view_model(
+                App->ViewWrite,
+                UHFReaderWriteModel * Model,
+                {
+                    strncpy(
+                        App->TempSaveBuffer,
+                        furi_string_get_cstr(Model->ResValue),
+                        App->TempBufferSaveSize);
+                    furi_string_set_str(Model->WriteFunction, WRITE_RES_MEM);
+                },
+                redraw);
+
             bool clear_previous_text = false;
             text_input_set_result_callback(
                 App->EpcWrite,

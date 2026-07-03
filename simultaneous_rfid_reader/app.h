@@ -16,6 +16,7 @@
 #define WRITE_RES_MEM "Reserved Memory"
 #define WRITE_USR_MEM "User Memory"
 #define WRITE_TID_MEM "TID Value"
+#define WRITE_SELECT_BANK "Select Bank"
 #define WRITE_EPC_OK "EPC Written!"
 #define WRITE_EPC_CANCELED "Write Canceled!"
 #define WRITE_EPC_FAIL "Write Failed!"

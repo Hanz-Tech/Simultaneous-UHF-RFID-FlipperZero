@@ -296,10 +296,13 @@ bool uhf_reader_view_bank_mem_custom_event_callback(uint32_t event, void* contex
             {
                 if(Cur == 0) {
                     furi_string_set_str(em->Tid, Disp);
+                    em->TidBankRead = true;
                 } else if(Cur == 1) {
                     furi_string_set_str(em->Reserved, Disp);
+                    em->ResBankRead = true;
                 } else {
                     furi_string_set_str(em->User, Disp);
+                    em->UserBankRead = true;
                 }
             },
             false);
@@ -324,6 +327,23 @@ bool uhf_reader_view_bank_mem_custom_event_callback(uint32_t event, void* contex
 
     default:
         return false;
+    }
+}
+
+// ─── Exit callback ────────────────────────────────────────────────────────────
+void uhf_reader_view_bank_mem_exit_callback(void* context) {
+    UHFReaderApp* App = (UHFReaderApp*)context;
+    // Stop a pending single-bank read timer if the user navigates away mid-read.
+    if(App->Timer) {
+        furi_timer_stop(App->Timer);
+        furi_timer_free(App->Timer);
+        App->Timer = NULL;
+    }
+    if(App->DeepReading) {
+        uhf_worker_stop(App->YRM100XWorker);
+        App->DeepReading = false;
+        with_view_model(
+            App->ViewBankMem, UHFRFIDTagModel * m, { m->IsDeepReading = false; }, false);
     }
 }
 
@@ -372,6 +392,7 @@ void view_bank_mem_alloc(UHFReaderApp* App) {
     view_set_previous_callback(
         App->ViewBankMem, uhf_reader_navigation_bank_mem_to_epc_dump_callback);
     view_set_enter_callback(App->ViewBankMem, uhf_reader_view_bank_mem_enter_callback);
+    view_set_exit_callback(App->ViewBankMem, uhf_reader_view_bank_mem_exit_callback);
     view_set_custom_callback(App->ViewBankMem, uhf_reader_view_bank_mem_custom_event_callback);
     view_set_context(App->ViewBankMem, App);
 
