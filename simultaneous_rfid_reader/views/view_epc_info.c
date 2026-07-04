@@ -1,299 +1,197 @@
 #include "view_epc_info.h"
 
-/**
- * @brief      EPC Info Draw Callback.
- * @details    This function is called when the user selects tag info on the tag actions submenu.
- * @param      canvas    The canvas - Canvas object for drawing the screen.
- * @param      model  The view model - model for the view with variables required for drawing.
-*/
-void uhf_reader_view_epc_info_draw_callback(Canvas* canvas, void* model) {
-    UHFRFIDTagModel* MyModel = (UHFRFIDTagModel*)model;
-    FuriString* XStr = furi_string_alloc();
+// ─── Page indices ─────────────────────────────────────────────────────────────
+#define PAGE_EPC   0
+#define PAGE_TID   1
+#define PAGE_USR   2
+#define PAGE_RES   3
+#define PAGE_COUNT 4
 
-    //Clearing the canvas, setting the color, font and content displayed.
-    canvas_clear(canvas);
-    canvas_set_color(canvas, ColorBlack);
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 44, 11, "Banks");
-    canvas_set_font(canvas, FontSecondary);
-    // Up-key save hint (top-left button with up-arrow icon)
-    elements_button_up(canvas, "Save");
-    canvas_draw_str(canvas, 4, 22, "EPC: ");
-    canvas_draw_str(canvas, 4, 44, "Reserved: ");
-    canvas_draw_str(canvas, 4, 33, "TID: ");
-    canvas_draw_str(canvas, 4, 55, "User Mem: ");
+static const char* const PAGE_TITLES[PAGE_COUNT] = {"EPC", "TID", "USR", "RES"};
 
-    //Displaying the EPC, TID, Reserved, and User memory in a scrolling fashion
-    MyModel->ScrollingTextEpc = (char*)furi_string_get_cstr(MyModel->Epc);
-    MyModel->ScrollingTextTid = (char*)furi_string_get_cstr(MyModel->Tid);
-    MyModel->ScrollingTextRes = (char*)furi_string_get_cstr(MyModel->Reserved);
-    MyModel->ScrollingTextMem = (char*)furi_string_get_cstr(MyModel->User);
+// [page][0=left label, 1=right label]
+static const char* const PAGE_NAV[PAGE_COUNT][2] = {
+    {"RES", "TID"},
+    {"EPC", "USR"},
+    {"TID", "RES"},
+    {"USR", "EPC"},
+};
 
-    //Setting the width of the screen for the sliding window
-    uint32_t ScreenWidthChars = 24;
+// ─── Helper: draw wrapped 2-line value ───────────────────────────────────────
+static void draw_value_wrapped(Canvas* canvas, const char* value, uint8_t y1, uint8_t y2) {
+    const size_t CPL = 20; // chars per line
+    size_t len = strlen(value);
 
-    // Calculate the start and end indices of the substring to draw
-    uint32_t StartPos = MyModel->ScrollOffsetEpc;
+    char l1[21];
+    memset(l1, 0, sizeof(l1));
+    memcpy(l1, value, len < CPL ? len : CPL);
+    canvas_draw_str(canvas, 0, y1, l1);
 
-    //Calculate the length of the scrolling text
-    uint32_t Len = strlen(MyModel->ScrollingTextEpc);
-
-    //I am sure there is a better way to do this that involves slightly safer memory management...
-    char VisiblePart[ScreenWidthChars + 2];
-    memset(VisiblePart, ' ', ScreenWidthChars);
-    VisiblePart[ScreenWidthChars] = '\0';
-
-    //Fill the array up with the epc values
-    for(uint32_t i = 0; i < ScreenWidthChars; i++) {
-        uint32_t CharIndex = StartPos + i;
-        if(CharIndex <= Len) {
-            VisiblePart[i] = MyModel->ScrollingTextEpc[CharIndex];
-        }
+    if(len > CPL) {
+        char l2[21];
+        memset(l2, 0, sizeof(l2));
+        size_t rem = len - CPL;
+        memcpy(l2, value + CPL, rem < CPL ? rem : CPL);
+        canvas_draw_str(canvas, 0, y2, l2);
     }
-
-    //This is just the same code for the TID, Reserved, and User memory
-    //TODO: Make this into some sort of function to reduce code duplication
-    canvas_draw_str(canvas, 28, 22, VisiblePart);
-    uint32_t StartPosTid = MyModel->ScrollOffsetTid;
-    uint32_t LenTid = strlen(MyModel->ScrollingTextTid);
-
-    char VisiblePartTid[ScreenWidthChars + 2];
-    memset(VisiblePartTid, ' ', ScreenWidthChars);
-    VisiblePartTid[ScreenWidthChars] = '\0';
-
-    for(uint32_t i = 0; i < ScreenWidthChars; i++) {
-        uint32_t CharIndexTid = StartPosTid + i;
-        if(CharIndexTid <= LenTid) {
-            VisiblePartTid[i] = MyModel->ScrollingTextTid[CharIndexTid];
-        }
-    }
-
-    canvas_draw_str(canvas, 28, 33, VisiblePartTid);
-    uint32_t StartPosRes = MyModel->ScrollOffsetRes;
-    uint32_t LenRes = strlen(MyModel->ScrollingTextRes);
-
-    char VisiblePartRes[ScreenWidthChars + 2];
-    memset(VisiblePartRes, ' ', ScreenWidthChars);
-    VisiblePartRes[ScreenWidthChars] = '\0';
-
-    for(uint32_t i = 0; i < ScreenWidthChars; i++) {
-        uint32_t CharIndexRes = StartPosRes + i;
-        if(CharIndexRes <= LenRes) {
-            VisiblePartRes[i] = MyModel->ScrollingTextRes[CharIndexRes];
-        }
-    }
-
-    canvas_draw_str(canvas, 46, 44, VisiblePartRes);
-    uint32_t StartPosMem = MyModel->ScrollOffsetMem;
-    uint32_t LenMem = strlen(MyModel->ScrollingTextMem);
-
-    char VisiblePartMem[ScreenWidthChars + 2];
-    memset(VisiblePartMem, ' ', ScreenWidthChars);
-    VisiblePartMem[ScreenWidthChars] = '\0';
-
-    for(uint32_t i = 0; i < ScreenWidthChars; i++) {
-        uint32_t CharIndexMem = StartPosMem + i;
-        if(CharIndexMem <= LenMem) {
-            VisiblePartMem[i] = MyModel->ScrollingTextMem[CharIndexMem];
-        }
-    }
-
-    canvas_draw_str(canvas, 48, 55, VisiblePartMem);
-    furi_string_free(XStr);
 }
 
-/**
- * @brief      Input callback for the Banks (EPC) screen.
- * @details    Pressing Up saves the currently displayed tag, but only when it
- *             came from a live deep-read (not when viewing an already-saved tag).
- * @param      event    The event - InputEvent object.
- * @param      context  The context - UHFReaderApp object.
- * @return     true if the event was handled, false otherwise.
-*/
+// ─── Draw callback ────────────────────────────────────────────────────────────
+void uhf_reader_view_epc_info_draw_callback(Canvas* canvas, void* model) {
+    UHFRFIDTagModel* m = (UHFRFIDTagModel*)model;
+    uint32_t page = m->CurrentBank % PAGE_COUNT;
+
+    canvas_clear(canvas);
+    canvas_set_color(canvas, ColorBlack);
+
+    // Bold bank name top-left
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 0, 11, PAGE_TITLES[page]);
+    canvas_set_font(canvas, FontSecondary);
+
+    // Bank value wrapped across two lines
+    const char* value = "---";
+    switch(page) {
+    case PAGE_EPC: value = furi_string_get_cstr(m->Epc);      break;
+    case PAGE_TID: value = furi_string_get_cstr(m->Tid);      break;
+    case PAGE_USR: value = furi_string_get_cstr(m->User);     break;
+    case PAGE_RES: value = furi_string_get_cstr(m->Reserved); break;
+    default:       break;
+    }
+    draw_value_wrapped(canvas, value, 22, 33);
+
+    // EPC page: CRC + PC on row 3
+    if(page == PAGE_EPC) {
+        canvas_draw_str(canvas, 4,  44, "CRC:");
+        canvas_draw_str(canvas, 28, 44, furi_string_get_cstr(m->Crc));
+        canvas_draw_str(canvas, 70, 44, "PC:");
+        canvas_draw_str(canvas, 88, 44, furi_string_get_cstr(m->Pc));
+    }
+
+    // Left / right navigation hints
+    elements_button_left(canvas,  PAGE_NAV[page][0]);
+    elements_button_right(canvas, PAGE_NAV[page][1]);
+}
+
+// ─── Input handler ────────────────────────────────────────────────────────────
 bool uhf_reader_view_epc_info_input_callback(InputEvent* event, void* context) {
     UHFReaderApp* App = (UHFReaderApp*)context;
-    if(event->type == InputTypeShort && event->key == InputKeyUp && App->DeepReadDone) {
-        uhf_reader_begin_save_tag(App, App->ViewEpcInfo, UHFReaderViewEpcInfo);
+
+    if(event->type != InputTypeShort) return false;
+
+    if(event->key == InputKeyLeft) {
+        with_view_model(
+            App->ViewEpcInfo,
+            UHFRFIDTagModel * m,
+            { m->CurrentBank = (m->CurrentBank + PAGE_COUNT - 1) % PAGE_COUNT; },
+            true);
         return true;
     }
+
+    if(event->key == InputKeyRight) {
+        with_view_model(
+            App->ViewEpcInfo,
+            UHFRFIDTagModel * m,
+            { m->CurrentBank = (m->CurrentBank + 1) % PAGE_COUNT; },
+            true);
+        return true;
+    }
+
     return false;
 }
 
-/**
- * @brief      Callback when the user exits the tag info screen.
- * @details    This function is called when the user exits the tag info screen.
- * @param      context  The context - not used
- * @return     the view id of the next view.
-*/
+// ─── Navigation callback ──────────────────────────────────────────────────────
 uint32_t uhf_reader_navigation_exit_epc_info_callback(void* context) {
     UNUSED(context);
     return UHFReaderViewTagAction;
 }
 
-/**
- * @brief      Callback for the timer used for the tag info screen
- * @details    This function is called for timer events.
- * @param      context  The UHFReaderApp - Used to change app variables.
-*/
+// ─── Timer callback (kept as dead stub for link compatibility) ────────────────
 void uhf_reader_view_epc_info_timer_callback(void* context) {
+    UNUSED(context);
+}
+
+// ─── Enter callback ───────────────────────────────────────────────────────────
+void uhf_reader_view_epc_info_enter_callback(void* context) {
     UHFReaderApp* App = (UHFReaderApp*)context;
 
-    //Update the offset for each value used in the draw callback
+    // Always start on the EPC page
     with_view_model(
         App->ViewEpcInfo,
-        UHFRFIDTagModel * model,
-        {
-            uint32_t Len = strlen(model->ScrollingTextEpc);
-            uint32_t LenTid = strlen(model->ScrollingTextTid);
-            uint32_t LenRes = strlen(model->ScrollingTextRes);
-            uint32_t LenMem = strlen(model->ScrollingTextMem);
+        UHFRFIDTagModel * m,
+        { m->CurrentBank = PAGE_EPC; },
+        false);
 
-            //Incrementing each offset
-            model->ScrollOffsetEpc++;
-            model->ScrollOffsetTid++;
-            model->ScrollOffsetRes++;
-            model->ScrollOffsetMem++;
+    // Load saved tag data from file
+    FuriString* TempStr = furi_string_alloc();
+    FuriString* TempTag = furi_string_alloc();
 
-            //Check the bounds of the offset and reset if necessary
-            if(model->ScrollOffsetEpc >= Len) {
-                model->ScrollOffsetEpc = 0;
-            }
-            if(model->ScrollOffsetTid >= LenTid) {
-                model->ScrollOffsetTid = 0;
-            }
-            if(model->ScrollOffsetRes >= LenRes) {
-                model->ScrollOffsetRes = 0;
-            }
-            if(model->ScrollOffsetMem >= LenMem) {
-                model->ScrollOffsetMem = 0;
-            }
-        },
-        true);
-    view_dispatcher_send_custom_event(App->ViewDispatcher, UHFReaderEventIdRedrawScreen);
-}
-
-/**
- * @brief      Tag Info enter callback function.
- * @details    This function is called when the view transitions to the Tag Info screen.
- * @param      context  The context - UHFReaderApp object.
-*/
-void uhf_reader_view_epc_info_enter_callback(void* context) {
-    //Grab the period for the timer
-    uint32_t Period = furi_ms_to_ticks(200);
-    UHFReaderApp* App = (UHFReaderApp*)context;
-
-    // When arriving from the EPC dump after a deep-read, the ViewEpcInfo model
-    // was already populated by the DeepReadDone handler — skip the file read.
-    if(!App->DeepReadDone) {
-        //Create FuriStrings for storing saved UHF tag values
-        FuriString* TempStr = furi_string_alloc();
-        FuriString* TempTag = furi_string_alloc();
-
-        //Open the saved epcs text file
-        if(!flipper_format_file_open_existing(App->EpcFile, APP_DATA_PATH("Saved_EPCs.txt"))) {
-            FURI_LOG_E(TAG, "Failed to open Saved file");
-            flipper_format_file_close(App->EpcFile);
-
-        } else {
-            //Read from the file selecting the current tag the user picked
-            furi_string_printf(TempStr, "Tag%ld", App->SelectedTagIndex);
-            if(!flipper_format_read_string(App->EpcFile, furi_string_get_cstr(TempStr), TempTag)) {
-                FURI_LOG_D(TAG, "Could not read tag %ld data", App->SelectedTagIndex);
-            } else {
-                //Grabbing the extracted tid, reserved memory, user memory, and epc from the file to display to the user
-                const char* InputString = furi_string_get_cstr(TempTag);
-                bool Redraw = true;
-                with_view_model(
-                    App->ViewEpcInfo,
-                    UHFRFIDTagModel * model,
-                    {
-                        furi_string_set(model->Epc, extract_epc(InputString));
-                        furi_string_set(model->Tid, extract_tid(InputString));
-                        furi_string_set(model->Reserved, extract_res(InputString));
-                        furi_string_set(model->User, extract_mem(InputString));
-                    },
-                    Redraw);
-                //Close the file
-                flipper_format_file_close(App->EpcFile);
-            }
+    if(flipper_format_file_open_existing(App->EpcFile, APP_DATA_PATH("Saved_EPCs.txt"))) {
+        furi_string_printf(TempStr, "Tag%ld", App->SelectedTagIndex);
+        if(flipper_format_read_string(
+               App->EpcFile, furi_string_get_cstr(TempStr), TempTag)) {
+            const char* s = furi_string_get_cstr(TempTag);
+            char* xepc = extract_epc(s);
+            char* xtid = extract_tid(s);
+            char* xres = extract_res(s);
+            char* xmem = extract_mem(s);
+            char* xcrc = extract_crc(s);
+            char* xpc  = extract_pc(s);
+            with_view_model(
+                App->ViewEpcInfo,
+                UHFRFIDTagModel * m,
+                {
+                    if(xepc) furi_string_set_str(m->Epc,      xepc);
+                    if(xtid) furi_string_set_str(m->Tid,      xtid);
+                    if(xres) furi_string_set_str(m->Reserved, xres);
+                    if(xmem) furi_string_set_str(m->User,     xmem);
+                    if(xcrc) furi_string_set_str(m->Crc,      xcrc);
+                    if(xpc)  furi_string_set_str(m->Pc,       xpc);
+                },
+                true);
+            if(xepc) free(xepc);
+            if(xtid) free(xtid);
+            if(xres) free(xres);
+            if(xmem) free(xmem);
+            if(xcrc) free(xcrc);
+            if(xpc)  free(xpc);
         }
-
-        //Freeing all FuriStrings used
-        furi_string_free(TempTag);
-        furi_string_free(TempStr);
+        flipper_format_file_close(App->EpcFile);
     }
 
-    //Start the timer
-    furi_assert(App->Timer == NULL);
-    App->Timer =
-        furi_timer_alloc(uhf_reader_view_epc_info_timer_callback, FuriTimerTypePeriodic, context);
-    furi_timer_start(App->Timer, Period);
+    furi_string_free(TempStr);
+    furi_string_free(TempTag);
 }
 
-/**
- * @brief      Callback when the user exits the tag info screen.
- * @details    This function is called when the user exits the tag info screen.
- * @param      context  The context - UHFReaderApp object.
-*/
+// ─── Exit callback ────────────────────────────────────────────────────────────
 void uhf_reader_view_epc_info_exit_callback(void* context) {
-    UHFReaderApp* App = (UHFReaderApp*)context;
-    if(App->Timer) {
-        furi_timer_stop(App->Timer);
-        furi_timer_free(App->Timer);
-        App->Timer = NULL;
-    }
+    UNUSED(context);
+    // No timer to clean up.
 }
 
-/**
- * @brief      Allocates the tag info view.
- * @details    This function allocates all variables for the tag info view.
- * @param      context  The context - UHFReaderApp object.
-*/
+// ─── Alloc / Free ─────────────────────────────────────────────────────────────
 void view_epc_info_alloc(UHFReaderApp* App) {
-    //Allocating the view and setting all callback functions
     App->ViewEpcInfo = view_alloc();
-    view_set_draw_callback(App->ViewEpcInfo, uhf_reader_view_epc_info_draw_callback);
-    view_set_input_callback(App->ViewEpcInfo, uhf_reader_view_epc_info_input_callback);
+    view_set_draw_callback(App->ViewEpcInfo,     uhf_reader_view_epc_info_draw_callback);
+    view_set_input_callback(App->ViewEpcInfo,    uhf_reader_view_epc_info_input_callback);
     view_set_previous_callback(App->ViewEpcInfo, uhf_reader_navigation_exit_epc_info_callback);
-    view_set_enter_callback(App->ViewEpcInfo, uhf_reader_view_epc_info_enter_callback);
-    view_set_exit_callback(App->ViewEpcInfo, uhf_reader_view_epc_info_exit_callback);
+    view_set_enter_callback(App->ViewEpcInfo,    uhf_reader_view_epc_info_enter_callback);
+    view_set_exit_callback(App->ViewEpcInfo,     uhf_reader_view_epc_info_exit_callback);
     view_set_context(App->ViewEpcInfo, App);
 
-    //Allocating the view model
     view_allocate_model(App->ViewEpcInfo, ViewModelTypeLockFree, sizeof(UHFRFIDTagModel));
-    UHFRFIDTagModel* ModelEpcInfo = view_get_model(App->ViewEpcInfo);
-    FuriString* UserMemEpcInfo = furi_string_alloc();
-    furi_string_set_str(UserMemEpcInfo, "000000...");
-    FuriString* TidMemEpcInfo = furi_string_alloc();
-    furi_string_set_str(TidMemEpcInfo, "E2801105200....");
-    FuriString* EpcInfo = furi_string_alloc();
-    furi_string_set_str(EpcInfo, "ABCDEF12");
-    FuriString* ReservedMemEpcInfo = furi_string_alloc();
-    furi_string_set_str(ReservedMemEpcInfo, "131313...");
+    UHFRFIDTagModel* m = view_get_model(App->ViewEpcInfo);
+    m->Epc        = furi_string_alloc_set("---");
+    m->Tid        = furi_string_alloc_set("---");
+    m->User       = furi_string_alloc_set("---");
+    m->Reserved   = furi_string_alloc_set("---");
+    m->Crc        = furi_string_alloc_set("----");
+    m->Pc         = furi_string_alloc_set("----");
+    m->CurrentBank = PAGE_EPC;
 
-    //Setting default values for the view model
-    ModelEpcInfo->User = UserMemEpcInfo;
-    ModelEpcInfo->Epc = EpcInfo;
-    ModelEpcInfo->Tid = TidMemEpcInfo;
-    ModelEpcInfo->Reserved = ReservedMemEpcInfo;
-    ModelEpcInfo->Crc = furi_string_alloc_set("----");
-    ModelEpcInfo->Pc = furi_string_alloc_set("----");
-    ModelEpcInfo->ScrollOffsetEpc = 0;
-    ModelEpcInfo->ScrollingTextEpc = "EPC VALUE HERE";
-    ModelEpcInfo->ScrollOffsetTid = 0;
-    ModelEpcInfo->ScrollingTextTid = "TID VALUE HERE";
-    ModelEpcInfo->ScrollOffsetRes = 0;
-    ModelEpcInfo->ScrollingTextRes = "RES VALUE HERE";
-    ModelEpcInfo->ScrollOffsetMem = 0;
-    ModelEpcInfo->ScrollingTextMem = "MEM VALUE HERE";
     view_dispatcher_add_view(App->ViewDispatcher, UHFReaderViewEpcInfo, App->ViewEpcInfo);
 }
 
-/**
- * @brief      Frees the tag info view.
- * @details    This function frees all variables for the tag info view.
- * @param      context  The context - UHFReaderApp object.
-*/
 void view_epc_info_free(UHFReaderApp* App) {
     view_dispatcher_remove_view(App->ViewDispatcher, UHFReaderViewEpcInfo);
     view_free(App->ViewEpcInfo);
