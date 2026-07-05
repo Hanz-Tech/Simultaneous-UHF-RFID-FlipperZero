@@ -470,7 +470,7 @@ M100ResponseType m100_set_select(M100Module* module, UHFTag* uhf_tag) {
     // end frame
     cmd[cmd_length - 1] = FRAME_END;
 
-    M100ResponseType rp_type = setup_and_send_rx(module, cmd, 12 + mask_length_bytes + 3);
+    M100ResponseType rp_type = setup_and_send_rx(module, cmd, cmd_length);
 
     if(rp_type != M100SuccessResponse) return rp_type;
 

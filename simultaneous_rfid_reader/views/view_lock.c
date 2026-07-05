@@ -167,7 +167,38 @@ void uhf_reader_lock_item_clicked(void* context, uint32_t index) {
         notification_message(App->Notifications, &uhf_sequence_blink_start_cyan);
         view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewLockPopup);
 
-        while(true) {
+        // Load the EPC from the live EPC dump view into NewTag so the Select
+        // filter has the correct bytes (multi-poll stores EPC in the view model,
+        // not directly in NewTag->epc->data/size).
+        {
+            FuriString* epc_str = furi_string_alloc();
+            with_view_model(
+                App->ViewEpc, UHFRFIDTagModel * m, { furi_string_set(epc_str, m->Epc); }, false);
+            uint8_t epc_buf[12];
+            size_t epc_len = 0;
+            hex_string_to_bytes(furi_string_get_cstr(epc_str), epc_buf, &epc_len);
+            furi_string_free(epc_str);
+            uhf_tag_set_epc(App->YRM100XWorker->NewTag, epc_buf, epc_len);
+        }
+
+        // The Lock command (0x82) does NOT re-send the Select itself — it relies
+        // on the Select parameters set immediately before it. When a Lock reply is
+        // lost (brown-out) the Select state can go stale, so on every attempt we
+        // re-issue the Select (§2.10 requires it) and then the Lock. The read path
+        // needs up to ~10 retries at the edge of range, and a Lock is a heavier
+        // transaction (Select -> Access -> Lock -> tag ACK), so give it the same
+        // budget. Empty/checksum, 0x13 "no response" and 0x13 "tag not found" are
+        // all transient at range, so retry them; only stop early on a definitive
+        // tag-level outcome (wrong AP, perm-locked, memory overrun).
+        const int MAX_LOCK_ATTEMPTS = 20;
+        for(int lock_attempts = 0; lock_attempts < MAX_LOCK_ATTEMPTS; lock_attempts++) {
+            // Re-Select this specific tag before each Lock attempt.
+            if(m100_set_select(App->YRM100XWorker->module, App->YRM100XWorker->NewTag) !=
+               M100SuccessResponse) {
+                returnResponse = M100NoTagResponse;
+                continue; // Select itself failed (RF transient) — retry.
+            }
+
             returnResponse = m100_lock_label_data(
                 App->YRM100XWorker->module,
                 App->DefaultLockBank,
@@ -177,14 +208,22 @@ void uhf_reader_lock_item_clicked(void* context, uint32_t index) {
                 notification_message(App->Notifications, &sequence_success);
                 dolphin_deed(DolphinDeedNfcReadSuccess);
                 break;
-            } else if(returnResponse == M100APWrong) {
-                notification_message(App->Notifications, &sequence_error);
-                break;
+            } else if(
+                returnResponse == M100EmptyResponse || returnResponse == M100ValidationFail ||
+                returnResponse == M100ChecksumFail || returnResponse == M100NoTagResponse) {
+                // Transient RF failure (brown-out at range) — retry.
+                continue;
             } else {
-                // Any other error response — don't hang forever
+                // Definitive tag-level outcome (wrong AP, perm-locked, overrun):
+                // stop retrying and report it.
                 notification_message(App->Notifications, &sequence_error);
                 break;
             }
+        }
+        if(returnResponse != M100SuccessResponse && returnResponse != M100APWrong &&
+           returnResponse != M100MemoryOverrun && returnResponse != M100MemoryLocked) {
+            // Exhausted all retries on a transient failure (empty/checksum/0x13).
+            notification_message(App->Notifications, &sequence_error);
         }
         notification_message(App->Notifications, &uhf_sequence_blink_stop);
 

@@ -298,23 +298,60 @@ void uhf_reader_kill_confirm_password_updated(void* context) {
                     uhf_tag_set_epc_pc(TempTag, combinedPc);
                     uhf_tag_set_epc_crc(TempTag, combinedCrc);
 
-                    // Start worker
+                    // Set Select to this specific tag before killing (§2.11 requires it).
+                    // m100_set_select also sets Select mode to 0x02 automatically.
+                    // Load the EPC from the write model (already populated by
+                    // uhf_reader_fetch_selected_tag) into NewTag's epc bytes.
+                    {
+                        uint8_t epc_buf[12];
+                        size_t epc_len = 0;
+                        hex_string_to_bytes(
+                            furi_string_get_cstr(Model->EpcValue), epc_buf, &epc_len);
+                        uhf_tag_set_epc(TempTag, epc_buf, epc_len);
+                    }
+                    // Kill (0x65), like Lock, does NOT re-send the Select itself —
+                    // it relies on the Select set immediately before it, and the tag
+                    // can brown out mid-handshake at range. So on every attempt we
+                    // re-issue the Select (§2.11) and then the Kill. Empty/checksum,
+                    // 0x13 "no response" and 0x12 "tag not found" are transient at
+                    // range, so retry them; only stop early on a definitive tag-level
+                    // outcome (success, wrong AP, kill pwd = 0).
                     view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewLockPopup);
-                    while(true) {
+                    const int MAX_KILL_ATTEMPTS = 20;
+                    for(int kill_attempts = 0; kill_attempts < MAX_KILL_ATTEMPTS;
+                        kill_attempts++) {
+                        // Re-Select this specific tag before each Kill attempt.
+                        if(m100_set_select(
+                               App->YRM100XWorker->module, App->YRM100XWorker->NewTag) !=
+                           M100SuccessResponse) {
+                            returnResponse = M100NoTagResponse;
+                            continue; // Select itself failed (RF transient) — retry.
+                        }
+
                         returnResponse = m100_kill_tag(
                             App->YRM100XWorker->module,
                             bytes_to_uint32(App->KillConfirmPwdTempBuffer, 4));
                         if(returnResponse == M100SuccessResponse) {
                             notification_message(App->Notifications, &sequence_success);
                             break;
-                        } else if(returnResponse == M100APWrong) {
-                            notification_message(App->Notifications, &sequence_error);
-                            break;
+                        } else if(
+                            returnResponse == M100EmptyResponse ||
+                            returnResponse == M100ValidationFail ||
+                            returnResponse == M100ChecksumFail ||
+                            returnResponse == M100NoTagResponse) {
+                            // Transient RF failure (brown-out at range) — retry.
+                            continue;
                         } else {
-                            // Any other error response — don't hang forever
+                            // Definitive tag-level outcome (wrong AP, kill pwd = 0):
+                            // stop retrying and report it.
                             notification_message(App->Notifications, &sequence_error);
                             break;
                         }
+                    }
+                    if(returnResponse != M100SuccessResponse && returnResponse != M100APWrong &&
+                       returnResponse != M100MemoryOverrun) {
+                        // Exhausted all retries on a transient failure.
+                        notification_message(App->Notifications, &sequence_error);
                     }
                     notification_message(App->Notifications, &uhf_sequence_blink_stop);
                     popup_reset(PopupLock);
