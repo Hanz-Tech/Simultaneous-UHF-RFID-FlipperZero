@@ -115,6 +115,9 @@ UHFWorkerEvent read_bank_till_max_length(UHFWorker* uhf_worker, UHFTag* uhf_tag,
             if(status == M100SuccessResponse || status == M100MemoryOverrun) {
                 break; // definitive answer
             }
+            if(status == M100APWrong || status == M100MemoryLocked) {
+                break; // definitive access failure — no point retrying
+            }
 
             retries++;
             FURI_LOG_W(
@@ -356,6 +359,14 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
             m100_disable_write_mask(uhf_worker->module, WRITE_USER);
             return UHFWorkerEventAborted;
         }
+        if(rp_type == M100MemoryLocked) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_USER);
+            return UHFWorkerEventAccessDenied;
+        }
+        if(rp_type == M100APWrong) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_USER);
+            return UHFWorkerEventWrongPassword;
+        }
         if(rp_type == M100SuccessResponse) {
             m100_disable_write_mask(uhf_worker->module, WRITE_USER);
             break;
@@ -371,6 +382,14 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
         if(targeted && furi_get_tick() >= deadline) {
             m100_disable_write_mask(uhf_worker->module, WRITE_TID);
             return UHFWorkerEventAborted;
+        }
+        if(rp_type == M100MemoryLocked) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_TID);
+            return UHFWorkerEventAccessDenied;
+        }
+        if(rp_type == M100APWrong) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_TID);
+            return UHFWorkerEventWrongPassword;
         }
         if(rp_type == M100SuccessResponse) {
             m100_disable_write_mask(uhf_worker->module, WRITE_TID);
@@ -402,6 +421,14 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
         if(targeted && furi_get_tick() >= deadline) {
             m100_disable_write_mask(uhf_worker->module, WRITE_EPC);
             return UHFWorkerEventAborted;
+        }
+        if(rp_type == M100MemoryLocked) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_EPC);
+            return UHFWorkerEventAccessDenied;
+        }
+        if(rp_type == M100APWrong) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_EPC);
+            return UHFWorkerEventWrongPassword;
         }
         if(rp_type == M100SuccessResponse) {
             m100_disable_write_mask(uhf_worker->module, WRITE_EPC);
@@ -447,9 +474,13 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
             m100_disable_write_mask(uhf_worker->module, WRITE_RFU);
             break;
         }
+        if(rp_type == M100MemoryLocked) {
+            m100_disable_write_mask(uhf_worker->module, WRITE_RFU);
+            return UHFWorkerEventAccessDenied;
+        }
         if(rp_type == M100APWrong) {
             m100_disable_write_mask(uhf_worker->module, WRITE_RFU);
-            return UHFWorkerEventAborted;
+            return UHFWorkerEventWrongPassword;
         }
     }
     return UHFWorkerEventSuccess;

@@ -39,6 +39,7 @@ typedef enum {
     UHFWorkerEventAborted,
     UHFWorkerEventCardDetected,
     UHFWorkerEventAccessDenied,
+    UHFWorkerEventWrongPassword,
 } UHFWorkerEvent;
 
 typedef void (*UHFWorkerCallback)(UHFWorkerEvent event, void* ctx);
