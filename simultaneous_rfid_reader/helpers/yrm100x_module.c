@@ -552,8 +552,15 @@ M100ResponseType m100_read_label_data_storage(
         uint8_t error_code = (payload_len >= 1) ? data[5] : 0x09;
         if(error_code == 0xA3) return M100MemoryOverrun; // DL is past the end of the bank
         if(error_code == 0x16) return M100APWrong; // wrong access password
-        // 0x09 and any other Gen2 error (locked/privileges/etc.) are NOT a length
-        // boundary; report as no-tag so the caller retries rather than truncating.
+        // 0xA0|x = EPC Gen2 read errors
+        if((error_code & 0xF0) == 0xA0) {
+            uint8_t gen2_err = error_code & 0x0F;
+            if(gen2_err == 0x02) return M100APWrong; // 0xA2: insufficient privileges
+            if(gen2_err == 0x04) return M100MemoryLocked; // 0xA4: memory locked / not readable
+            return M100MemoryOverrun; // 0xA3: out of range, etc.
+        }
+        // 0x09 and any other code are NOT a length boundary — report as no-tag so
+        // the caller retries rather than truncating.
         return M100NoTagResponse;
     }
 
@@ -717,6 +724,7 @@ M100ResponseType m100_lock_label_data(
             return M100APWrong;
         else if((data[5] & 0xF0) == 0xC0) { // 0xC0|err = EPC Gen2 lock error
             uint8_t gen2_err = data[5] & 0x0F;
+            if(gen2_err == 0x02) return M100APWrong; // 0xC2: insufficient privileges (wrong AP)
             if(gen2_err == 0x04)
                 return M100MemoryLocked; // 0xC4: memory area is permanently locked
             return M100MemoryOverrun; // 0xC3: memory overrun, or other Gen2 error
@@ -856,7 +864,14 @@ M100ResponseType m100_write_label_data_storage(
         return M100NoTagResponse;
     else if(buff_data[2] == 0xFF && (buff_length == 23 || buff_data[5] == 0x16))
         return M100APWrong;
-    else if(buff_data[2] == 0xFF)
+    else if(buff_data[2] == 0xFF && (buff_data[5] & 0xF0) == 0xC0)
+        return M100MemoryLocked; // Lock cmd Gen2 errors: 0xC0|err
+    else if(buff_data[2] == 0xFF && (buff_data[5] & 0xF0) == 0xB0) {
+        uint8_t gen2_err = buff_data[5] & 0x0F;
+        if(gen2_err == 0x02) return M100APWrong; // 0xB2: insufficient privileges
+        if(gen2_err == 0x04) return M100MemoryLocked; // 0xB4: memory locked
+        return M100MemoryLocked; // 0xB3 overrun, 0xB0 other, etc.
+    } else if(buff_data[2] == 0xFF)
         return M100ValidationFail;
     return M100SuccessResponse;
 }
@@ -891,7 +906,14 @@ static M100ResponseType
         return M100NoTagResponse;
     else if(buff_data[2] == 0xFF && (buff_length == 23 || buff_data[5] == 0x16))
         return M100APWrong;
-    else if(buff_data[2] == 0xFF)
+    else if(buff_data[2] == 0xFF && (buff_data[5] & 0xF0) == 0xC0)
+        return M100MemoryLocked;
+    else if(buff_data[2] == 0xFF && (buff_data[5] & 0xF0) == 0xB0) {
+        uint8_t gen2_err = buff_data[5] & 0x0F;
+        if(gen2_err == 0x02) return M100APWrong; // 0xB2: insufficient privileges
+        if(gen2_err == 0x04) return M100MemoryLocked; // 0xB4: memory locked
+        return M100MemoryLocked;
+    } else if(buff_data[2] == 0xFF)
         return M100ValidationFail;
     return M100SuccessResponse;
 }

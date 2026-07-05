@@ -99,6 +99,8 @@ typedef enum {
     UHFCustomEventReserved = 100,
     UHFCustomEventWorkerExit = 105,
     UHFCustomEventWorkerExitAborted = 106,
+    UHFCustomEventWorkerExitAccessDenied = 107,
+    UHFCustomEventWorkerExitWrongPassword = 108,
     UHFCustomEventWorkerCardDetected = 107,
     UHFCustomEventDeepReadDone = 108,
     UHFCustomEventDeepReadAborted = 109,
@@ -136,7 +138,7 @@ static const NotificationSequence uhf_sequence_blink_start_cyan = {
     NULL,
 };
 
-//LED blinking notification sequence for stopping 
+//LED blinking notification sequence for stopping
 static const NotificationSequence uhf_sequence_blink_stop = {
     &message_blink_stop,
     NULL,
@@ -165,7 +167,7 @@ typedef struct {
     Submenu* SubmenuTagActions;
     Submenu* SubmenuLockActions;
     Submenu* SubmenuKillActions;
-    
+
     TextInput* TextInput;
     ByteInput* ApInput;
     ByteInput* KillInput;
@@ -179,7 +181,7 @@ typedef struct {
     TextInput* SaveInput;
     TextInput* RenameInput;
     TextInput* EpcWrite;
-    
+
     Popup* LockPopup;
 
     VariableItemList* VariableItemListConfig;
@@ -333,15 +335,14 @@ typedef struct {
     uint8_t SettingRegionValues[5];
     uint8_t UHFModuleType;
     uint8_t UHFRegionType;
-    
 
     char** EpcValues;
     char** TidValues;
     char** ResValues;
     char** MemValues;
-    
+
     UHFWorker* YRM100XWorker;
-    
+
     char* ReadAccessPasswordLabel;
     char* AccessPasswordPlaceHolder;
     char* DefaultAccessPassword;
@@ -358,7 +359,7 @@ typedef struct {
     BankType DefaultLockBank;
     LockType DefaultLockType;
 
-    //Buffers for YRM100 functionality 
+    //Buffers for YRM100 functionality
     size_t EpcBytesLen;
     size_t ResBytesLen;
     size_t TidBytesLen;
@@ -366,7 +367,7 @@ typedef struct {
     size_t PcBytesLen;
     size_t CrcBytesLen;
     uint8_t* EpcBytes;
-    uint8_t* ResBytes; 
+    uint8_t* ResBytes;
     uint8_t* TidBytes;
     uint8_t* UserBytes;
     uint16_t* PcBytes;
@@ -382,7 +383,7 @@ typedef struct {
     uint32_t Setting1Index;
     FuriString* Setting2Power;
     FuriString* SettingReadAp;
-    
+
     uint32_t Setting3Index;
     bool IsReading;
     FuriString* EpcName;
@@ -428,6 +429,8 @@ typedef struct {
     bool BankChosen;
     //True when this is a targeted "Update" of a specific scanned tag (live)
     bool IsUpdateMode;
+    //True once the live-update AP prompt has been completed for the current session
+    bool WriteApPromptDone;
 } UHFReaderWriteModel;
 
 //Model for the delete screen
@@ -447,7 +450,7 @@ typedef struct {
     FuriString* User;
     FuriString* Crc;
     FuriString* Pc;
-    int8_t Rssi;  // Last RSSI reading from the YRM100 poll frame (signed dBm)
+    int8_t Rssi; // Last RSSI reading from the YRM100 poll frame (signed dBm)
     uint32_t CurEpcIndex;
     uint32_t ScrollOffsetEpc;
     char* ScrollingTextEpc;
@@ -485,6 +488,6 @@ typedef enum {
 typedef struct {
     ClonePhase phase;
     char target_epc_str[65]; // hex string of found target tag EPC (up to 32B = 64 hex chars + NUL)
-    uint16_t clone_mask;     // which banks are being written (copy of App->CloneMask)
-    uint8_t clone_count;     // number of successful clones this session
+    uint16_t clone_mask; // which banks are being written (copy of App->CloneMask)
+    uint8_t clone_count; // number of successful clones this session
 } UHFReaderCloneModel;
