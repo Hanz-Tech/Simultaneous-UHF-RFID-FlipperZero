@@ -80,11 +80,9 @@ void uhf_reader_view_bank_mem_draw_callback(Canvas* canvas, void* model) {
     // Bank browse ring buttons: Left = previous node, Right = next node.
     // TID's previous and User's next are both the EPC dump screen.
     elements_button_left(
-        canvas,
-        MyModel->CurrentBank == 0 ? "EPC" : bank_mem_short_name(MyModel->CurrentBank - 1));
+        canvas, MyModel->CurrentBank == 0 ? "EPC" : bank_mem_short_name(MyModel->CurrentBank - 1));
     elements_button_right(
-        canvas,
-        MyModel->CurrentBank == 2 ? "EPC" : bank_mem_short_name(MyModel->CurrentBank + 1));
+        canvas, MyModel->CurrentBank == 2 ? "EPC" : bank_mem_short_name(MyModel->CurrentBank + 1));
 
     const char* Content = furi_string_get_cstr(bank_mem_string(MyModel));
     size_t Len = strlen(Content);
@@ -110,14 +108,18 @@ void uhf_reader_view_bank_mem_draw_callback(Canvas* canvas, void* model) {
             // Extra lines: decoded Kill Password (bytes 0-3) and Access Password (bytes 4-7).
             size_t ExtraIdx = LineIdx - TotalLines;
             if(ExtraIdx == 0) {
-                snprintf(LineBuf, sizeof(LineBuf), "Kill: %.*s",
-                    (int)(Len >= 8 ? 8 : (int)Len), Content);
+                snprintf(
+                    LineBuf, sizeof(LineBuf), "KP: %.*s", (int)(Len >= 8 ? 8 : (int)Len), Content);
             } else {
                 if(Len >= 8) {
-                    snprintf(LineBuf, sizeof(LineBuf), "Acc:  %.*s",
-                        (int)(Len >= 16 ? 8 : (int)(Len - 8)), Content + 8);
+                    snprintf(
+                        LineBuf,
+                        sizeof(LineBuf),
+                        "AP: %.*s",
+                        (int)(Len >= 16 ? 8 : (int)(Len - 8)),
+                        Content + 8);
                 } else {
-                    snprintf(LineBuf, sizeof(LineBuf), "Acc:  (n/a)");
+                    snprintf(LineBuf, sizeof(LineBuf), "AP:  (n/a)");
                 }
             }
         } else {
@@ -176,18 +178,16 @@ bool uhf_reader_view_bank_mem_input_callback(InputEvent* event, void* context) {
     }
 
     // OK: read (or re-read) the currently shown bank.
-    if(event->key == InputKeyOk && !App->DeepReading &&
-       App->UHFModuleType == YRM100X_MODULE && App->NumberOfEpcsToRead > 0) {
+    if(event->key == InputKeyOk && !App->DeepReading && App->UHFModuleType == YRM100X_MODULE &&
+       App->NumberOfEpcsToRead > 0) {
         uint32_t Cur = 0;
-        with_view_model(
-            App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
+        with_view_model(App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
 
         App->DeepReading = true;
         App->DeepReadTimerExpired = false;
         App->YRM100XWorker->TargetBank = bank_mem_type(Cur);
 
-        with_view_model(
-            App->ViewBankMem, UHFRFIDTagModel * m, { m->IsDeepReading = true; }, true);
+        with_view_model(App->ViewBankMem, UHFRFIDTagModel * m, { m->IsDeepReading = true; }, true);
 
         notification_message(App->Notifications, &uhf_sequence_blink_start_cyan);
 
@@ -211,8 +211,7 @@ bool uhf_reader_view_bank_mem_input_callback(InputEvent* event, void* context) {
     // Right: browse forward to the next bank; wrap User → EPC dump.
     if(event->key == InputKeyRight && !App->DeepReading) {
         uint32_t Cur = 0;
-        with_view_model(
-            App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
+        with_view_model(App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
         if(Cur < 2) {
             with_view_model(
                 App->ViewBankMem,
@@ -231,8 +230,7 @@ bool uhf_reader_view_bank_mem_input_callback(InputEvent* event, void* context) {
     // Left: browse backward to the previous bank; wrap TID → EPC dump.
     if(event->key == InputKeyLeft && !App->DeepReading) {
         uint32_t Cur = 0;
-        with_view_model(
-            App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
+        with_view_model(App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
         if(Cur > 0) {
             with_view_model(
                 App->ViewBankMem,
@@ -298,8 +296,7 @@ bool uhf_reader_view_bank_mem_custom_event_callback(uint32_t event, void* contex
         App->DeepReading = false;
 
         uint32_t Cur = 0;
-        with_view_model(
-            App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
+        with_view_model(App->ViewBankMem, UHFRFIDTagModel * m, { Cur = m->CurrentBank; }, false);
 
         UHFTag* tag = App->YRM100XWorker->SelectedTag;
         char* Hex = NULL;
