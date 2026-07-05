@@ -2,6 +2,11 @@
 
 **Please note that this is a fork of the original app from @haffnerriley with new features for YRM100X UHF Reader**
 
+### New in v1.3.0
+- Add feature to clone tags from EPC actions
+- Fix tag lock mechanism for YRM100
+- Replaced Saved -> EPC Action -> Tag Data with a improved view
+
 ### New in v1.2.0
 
 #### Multi-tag reading (YRM100)
