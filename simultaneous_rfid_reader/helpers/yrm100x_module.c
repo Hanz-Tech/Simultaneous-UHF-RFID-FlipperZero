@@ -16,7 +16,7 @@ static const char* UHF_MOD_TAG = "UHF_MOD";
 #define WAIT_TICK 4000 // max wait time in between each byte
 
 // Error frames use command byte 0xFF regardless of which command triggered them.
-#define FRAME_ERROR_CMD 0xFF
+#define FRAME_ERROR_CMD  0xFF
 // Maximum number of stale/mismatched frames to discard while hunting for the
 // response that actually belongs to the command we just sent.
 #define MAX_STALE_FRAMES 4
@@ -57,7 +57,8 @@ static M100ResponseType setup_and_send_rx(M100Module* module, uint8_t* cmd, size
 
     // Log TX bytes
     FuriString* tx_log = furi_string_alloc();
-    for(size_t i = 0; i < cmd_length; i++) furi_string_cat_printf(tx_log, "%02X ", cmd[i]);
+    for(size_t i = 0; i < cmd_length; i++)
+        furi_string_cat_printf(tx_log, "%02X ", cmd[i]);
     FURI_LOG_D(UHF_MOD_TAG, "TX [%d]: %s", (int)cmd_length, furi_string_get_cstr(tx_log));
     furi_string_free(tx_log);
 
@@ -77,7 +78,8 @@ static M100ResponseType setup_and_send_rx(M100Module* module, uint8_t* cmd, size
 
         // Log RX bytes (always, so failures are visible)
         FuriString* rx_log = furi_string_alloc();
-        for(size_t i = 0; i < length; i++) furi_string_cat_printf(rx_log, "%02X ", data[i]);
+        for(size_t i = 0; i < length; i++)
+            furi_string_cat_printf(rx_log, "%02X ", data[i]);
         FURI_LOG_D(
             UHF_MOD_TAG,
             "RX [%d] (ticks=%d): %s",
@@ -111,8 +113,8 @@ static M100ResponseType setup_and_send_rx(M100Module* module, uint8_t* cmd, size
 
         // command-echo check: discard frames belonging to a previous command
         uint8_t rtn_cmd = (length >= 3) ? data[2] : 0x00;
-        bool cmd_matches =
-            (rtn_cmd == expected_cmd) || (allow_error_frame && rtn_cmd == FRAME_ERROR_CMD);
+        bool cmd_matches = (rtn_cmd == expected_cmd) ||
+                           (allow_error_frame && rtn_cmd == FRAME_ERROR_CMD);
         if(!cmd_matches) {
             FURI_LOG_W(
                 UHF_MOD_TAG,
@@ -273,23 +275,19 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
     uhf_buffer_reset(buffer);
     uhf_uart_tick_reset(uart);
     uhf_uart_send_wait(
-        uart,
-        (uint8_t*)&CMD_STOP_MULTIPLE_POLLING.cmd[0],
-        CMD_STOP_MULTIPLE_POLLING.length);
+        uart, (uint8_t*)&CMD_STOP_MULTIPLE_POLLING.cmd[0], CMD_STOP_MULTIPLE_POLLING.length);
     // Drain the stop-ack (or any in-flight EPC/no-tag frames) — 20 rounds ~= 4 ms
     for(int i = 0; i < 20; i++) {
         uhf_uart_tick_reset(uart);
-        while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {}
+        while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
+        }
         if(uhf_is_buffer_closed(buffer)) break;
     }
 
     // Send CMD_MULTIPLE_POLLING once to start the inventory round
     uhf_buffer_reset(buffer);
     uhf_uart_tick_reset(uart);
-    uhf_uart_send_wait(
-        uart,
-        (uint8_t*)&CMD_MULTIPLE_POLLING.cmd[0],
-        CMD_MULTIPLE_POLLING.length);
+    uhf_uart_send_wait(uart, (uint8_t*)&CMD_MULTIPLE_POLLING.cmd[0], CMD_MULTIPLE_POLLING.length);
 
     // Live multi-tag scanning session. Runs until the user stops it (worker state
     // -> Stop) or the tag list is full (UHF_TAG_WRAPPER_MAX_TAGS). When a tag is in
@@ -368,8 +366,7 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
             continue;
         }
 
-        uint16_t crc =
-            (uint16_t)(((uint16_t)data[8 + epc_len] << 8) | data[8 + epc_len + 1]);
+        uint16_t crc = (uint16_t)(((uint16_t)data[8 + epc_len] << 8) | data[8 + epc_len + 1]);
         if(crc16_genibus(data + 6, epc_len + 2) != crc) {
             FURI_LOG_W(UHF_MOD_TAG, "multi_poll: EPC CRC fail");
             continue;
@@ -421,13 +418,12 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
     // Always stop the inventory round regardless of exit path
     uhf_buffer_reset(buffer);
     uhf_uart_send_wait(
-        uart,
-        (uint8_t*)&CMD_STOP_MULTIPLE_POLLING.cmd[0],
-        CMD_STOP_MULTIPLE_POLLING.length);
+        uart, (uint8_t*)&CMD_STOP_MULTIPLE_POLLING.cmd[0], CMD_STOP_MULTIPLE_POLLING.length);
     // Drain the stop-ack frame (module responds quickly; 20 rounds is sufficient)
     for(int round = 0; round < 20; round++) {
         uhf_uart_tick_reset(uart);
-        while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {}
+        while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
+        }
         if(uhf_is_buffer_closed(buffer)) break;
     }
     uhf_uart_tick_reset(uart);
@@ -605,64 +601,67 @@ uint32_t get_lock_param(uint32_t lock_param, BankType bank, LockType lockfunctio
             return 0x02008;
         }
     } else if(lockfunction == PermaLock) {
+        // PermaLock: mask=10 (apply), action=11 (not writable from any state)
         switch(bank) {
         case KillPwd:
-            lock_param = 0xC0300;
+            lock_param = 0x80300;
             break;
         case AccessPwd:
-            lock_param = 0x300C0;
+            lock_param = 0x200C0;
             break;
         case EPCBank:
-            lock_param = 0x0C030;
+            lock_param = 0x08030;
             break;
         case TIDBank:
-            lock_param = 0x0300C;
+            lock_param = 0x0200C;
             break;
         case FileZero:
-            lock_param = 0x00C03;
+            lock_param = 0x00803;
             break;
         default:
-            return 0x300C0;
+            return 0x200C0;
         }
     } else if(lockfunction == PermaUnlock) {
+        // PermaUnlock: mask=10 (apply), action=01 (permanently writable, may never be locked)
         switch(bank) {
         case KillPwd:
-            lock_param = 0x40100;
+            lock_param = 0x80100;
             break;
         case AccessPwd:
-            lock_param = 0x10040;
+            lock_param = 0x20040;
             break;
         case EPCBank:
-            lock_param = 0x04010;
+            lock_param = 0x08010;
             break;
         case TIDBank:
-            lock_param = 0x01004;
+            lock_param = 0x02004;
             break;
         case FileZero:
-            lock_param = 0x00401;
+            lock_param = 0x00801;
             break;
         default:
-            return 0x10040;
+            return 0x20040;
         }
     } else {
+        // Unlock: mask=10 (apply), action=00 (writable from open or secured state)
         switch(bank) {
         case KillPwd:
-            lock_param = 0xC0000;
+            lock_param = 0x80000;
             break;
         case AccessPwd:
-            lock_param = 0x30000;
+            lock_param = 0x20000;
             break;
         case EPCBank:
-            lock_param = 0x0C000;
+            lock_param = 0x08000;
             break;
         case TIDBank:
-            lock_param = 0x03000;
+            lock_param = 0x02000;
             break;
         case FileZero:
-            lock_param = 0x00C00;
+            lock_param = 0x00800;
             break;
         default:
-            return 0x30000;
+            return 0x20000;
         }
     }
 
@@ -711,16 +710,16 @@ M100ResponseType m100_lock_label_data(
     //Need to add a check here for an incorrect password. Look for an error code of some sort
     if(rtn_command == 0xFF) {
         if(payload_len == 0x01 && data[5] == 0x13)
-            return M100NoTagResponse;       // PL=1: no EPC, tag not found
+            return M100NoTagResponse; // PL=1: no EPC, tag not found
         else if(data[5] == 0x13)
-            return M100ValidationFail;      // PL>1: found tag but Lock cmd got no RF response
+            return M100ValidationFail; // PL>1: found tag but Lock cmd got no RF response
         else if(data[5] == 0x16)
             return M100APWrong;
         else if((data[5] & 0xF0) == 0xC0) { // 0xC0|err = EPC Gen2 lock error
             uint8_t gen2_err = data[5] & 0x0F;
             if(gen2_err == 0x04)
-                return M100MemoryLocked;    // 0xC4: memory area is permanently locked
-            return M100MemoryOverrun;       // 0xC3: memory overrun, or other Gen2 error
+                return M100MemoryLocked; // 0xC4: memory area is permanently locked
+            return M100MemoryOverrun; // 0xC3: memory overrun, or other Gen2 error
         }
         return M100MemoryOverrun;
     }
@@ -863,11 +862,8 @@ M100ResponseType m100_write_label_data_storage(
 }
 
 // Shared helper: write 2 words (4 bytes) to Reserved bank at given source address.
-static M100ResponseType m100_write_reserved_words(
-    M100Module* module,
-    uint32_t current_ap,
-    uint16_t sa,
-    uint8_t* data) {
+static M100ResponseType
+    m100_write_reserved_words(M100Module* module, uint32_t current_ap, uint16_t sa, uint8_t* data) {
     uint8_t cmd[MAX_BUFFER_SIZE];
     size_t cmd_length = CMD_WRITE_LABEL_DATA_STORE.length;
     memcpy(cmd, CMD_WRITE_LABEL_DATA_STORE.cmd, cmd_length);
@@ -901,18 +897,13 @@ static M100ResponseType m100_write_reserved_words(
 }
 
 // Write new access password (words 2-3 of Reserved bank, SA=2, DL=2).
-M100ResponseType m100_write_access_pwd(
-    M100Module* module,
-    uint32_t current_ap,
-    uint8_t* new_ap) {
+M100ResponseType m100_write_access_pwd(M100Module* module, uint32_t current_ap, uint8_t* new_ap) {
     return m100_write_reserved_words(module, current_ap, 2, new_ap);
 }
 
 // Write new kill password (words 0-1 of Reserved bank, SA=0, DL=2).
-M100ResponseType m100_write_kill_pwd_only(
-    M100Module* module,
-    uint32_t current_ap,
-    uint8_t* new_kp) {
+M100ResponseType
+    m100_write_kill_pwd_only(M100Module* module, uint32_t current_ap, uint8_t* new_kp) {
     return m100_write_reserved_words(module, current_ap, 0, new_kp);
 }
 
@@ -943,9 +934,7 @@ bool m100_set_working_region(M100Module* module, WorkingRegion region) {
 
 bool m100_get_transmitting_power(M100Module* module, uint16_t* power_raw) {
     M100ResponseType result = setup_and_send_rx(
-        module,
-        (uint8_t*)&CMD_GET_TRANSMITTING_POWER.cmd[0],
-        CMD_GET_TRANSMITTING_POWER.length);
+        module, (uint8_t*)&CMD_GET_TRANSMITTING_POWER.cmd[0], CMD_GET_TRANSMITTING_POWER.length);
     if(result != M100SuccessResponse) return false;
     uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
     size_t length = uhf_buffer_get_size(module->uart->buffer);
@@ -971,9 +960,7 @@ bool m100_set_transmitting_power(M100Module* module, uint16_t power) {
 
 bool m100_get_query_params(M100Module* module, uint8_t* session, uint8_t* target) {
     M100ResponseType result = setup_and_send_rx(
-        module,
-        (uint8_t*)&CMD_GET_QUERY_PARAMETERS.cmd[0],
-        CMD_GET_QUERY_PARAMETERS.length);
+        module, (uint8_t*)&CMD_GET_QUERY_PARAMETERS.cmd[0], CMD_GET_QUERY_PARAMETERS.length);
     if(result != M100SuccessResponse) return false;
     uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
     size_t length = uhf_buffer_get_size(module->uart->buffer);
