@@ -17,22 +17,50 @@ static const char* const PAGE_NAV[PAGE_COUNT][2] = {
     {"USR", "EPC"},
 };
 
-// ─── Helper: draw wrapped 2-line value ───────────────────────────────────────
-static void draw_value_wrapped(Canvas* canvas, const char* value, uint8_t y1, uint8_t y2) {
-    const size_t CPL = 20; // chars per line
+#define EPC_INFO_CHARS_PER_LINE 20
+#define EPC_INFO_VISIBLE_LINES  3
+#define EPC_INFO_CONTENT_TOP_Y  20
+#define EPC_INFO_LINE_STEP_Y    10
+
+// ─── Helper: draw wrapped, scrollable value ─────────────────────────────────
+static void draw_value_scrollable(Canvas* canvas, const char* value, uint32_t vscroll) {
+    const size_t CPL = EPC_INFO_CHARS_PER_LINE;
     size_t len = strlen(value);
+    if(len == 0) return;
 
-    char l1[21];
-    memset(l1, 0, sizeof(l1));
-    memcpy(l1, value, len < CPL ? len : CPL);
-    canvas_draw_str(canvas, 0, y1, l1);
+    size_t totalLines = (len + CPL - 1) / CPL;
+    if(totalLines <= EPC_INFO_VISIBLE_LINES) {
+        // Fit all lines — no scroll needed
+        for(size_t i = 0; i < totalLines; i++) {
+            size_t off = i * CPL;
+            size_t n = (len - off) < CPL ? (len - off) : CPL;
+            char buf[CPL + 1];
+            memcpy(buf, value + off, n);
+            buf[n] = '\0';
+            canvas_draw_str(canvas, 0, EPC_INFO_CONTENT_TOP_Y + (int)i * EPC_INFO_LINE_STEP_Y, buf);
+        }
+        return;
+    }
 
-    if(len > CPL) {
-        char l2[21];
-        memset(l2, 0, sizeof(l2));
-        size_t rem = len - CPL;
-        memcpy(l2, value + CPL, rem < CPL ? rem : CPL);
-        canvas_draw_str(canvas, 0, y2, l2);
+    // Show visible window
+    size_t start = vscroll;
+    for(uint32_t row = 0; row < EPC_INFO_VISIBLE_LINES; row++) {
+        size_t lineIdx = start + row;
+        if(lineIdx >= totalLines) break;
+        size_t off = lineIdx * CPL;
+        size_t n = (len - off) < CPL ? (len - off) : CPL;
+        char buf[CPL + 1];
+        memcpy(buf, value + off, n);
+        buf[n] = '\0';
+        canvas_draw_str(canvas, 0, EPC_INFO_CONTENT_TOP_Y + row * EPC_INFO_LINE_STEP_Y, buf);
+    }
+
+    // Scroll indicators
+    if(start > 0) {
+        canvas_draw_str(canvas, 122, EPC_INFO_CONTENT_TOP_Y + 12, "\x18");
+    }
+    if(start + EPC_INFO_VISIBLE_LINES < totalLines) {
+        canvas_draw_str(canvas, 122, EPC_INFO_CONTENT_TOP_Y + 34, "\x19");
     }
 }
 
@@ -49,23 +77,24 @@ void uhf_reader_view_epc_info_draw_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 0, 11, PAGE_TITLES[page]);
     canvas_set_font(canvas, FontSecondary);
 
-    // Bank value wrapped across two lines
+    // Bank value — scrollable wrapped content
     const char* value = "---";
+    uint32_t vscroll = 0;
     switch(page) {
     case PAGE_EPC: value = furi_string_get_cstr(m->Epc);      break;
     case PAGE_TID: value = furi_string_get_cstr(m->Tid);      break;
-    case PAGE_USR: value = furi_string_get_cstr(m->User);     break;
-    case PAGE_RES: value = furi_string_get_cstr(m->Reserved); break;
+    case PAGE_USR: value = furi_string_get_cstr(m->User);     vscroll = m->VScrollLine; break;
+    case PAGE_RES: value = furi_string_get_cstr(m->Reserved); vscroll = m->VScrollLine; break;
     default:       break;
     }
-    draw_value_wrapped(canvas, value, 22, 33);
+    draw_value_scrollable(canvas, value, vscroll);
 
-    // EPC page: CRC + PC on row 3
+    // EPC page: CRC + PC below scrollable area
     if(page == PAGE_EPC) {
-        canvas_draw_str(canvas, 4,  44, "CRC:");
-        canvas_draw_str(canvas, 28, 44, furi_string_get_cstr(m->Crc));
-        canvas_draw_str(canvas, 70, 44, "PC:");
-        canvas_draw_str(canvas, 88, 44, furi_string_get_cstr(m->Pc));
+        canvas_draw_str(canvas, 4,  48, "CRC:");
+        canvas_draw_str(canvas, 28, 48, furi_string_get_cstr(m->Crc));
+        canvas_draw_str(canvas, 70, 48, "PC:");
+        canvas_draw_str(canvas, 88, 48, furi_string_get_cstr(m->Pc));
     }
 
     // Left / right navigation hints
@@ -79,21 +108,45 @@ bool uhf_reader_view_epc_info_input_callback(InputEvent* event, void* context) {
 
     if(event->type != InputTypeShort) return false;
 
+    // Determine current page for key routing
+    uint32_t page = 0;
+    with_view_model(
+        App->ViewEpcInfo,
+        UHFRFIDTagModel * m, { page = m->CurrentBank % PAGE_COUNT; }, false);
+
+    // Up: scroll content up (USR and RES pages)
+    if(event->key == InputKeyUp && (page == PAGE_USR || page == PAGE_RES)) {
+        with_view_model(
+            App->ViewEpcInfo,
+            UHFRFIDTagModel * m, { if(m->VScrollLine > 0) m->VScrollLine--; }, true);
+        return true;
+    }
+
+    // Down: scroll content down (USR and RES pages)
+    if(event->key == InputKeyDown && (page == PAGE_USR || page == PAGE_RES)) {
+        with_view_model(
+            App->ViewEpcInfo,
+            UHFRFIDTagModel * m, {
+                size_t len = strlen(furi_string_get_cstr(
+                    page == PAGE_USR ? m->User : m->Reserved));
+                size_t total = (len + EPC_INFO_CHARS_PER_LINE - 1) / EPC_INFO_CHARS_PER_LINE;
+                size_t maxStart = total > EPC_INFO_VISIBLE_LINES ? total - EPC_INFO_VISIBLE_LINES : 0;
+                if(m->VScrollLine < maxStart) m->VScrollLine++;
+            }, true);
+        return true;
+    }
+
     if(event->key == InputKeyLeft) {
         with_view_model(
             App->ViewEpcInfo,
-            UHFRFIDTagModel * m,
-            { m->CurrentBank = (m->CurrentBank + PAGE_COUNT - 1) % PAGE_COUNT; },
-            true);
+            UHFRFIDTagModel * m, { m->CurrentBank = (m->CurrentBank + PAGE_COUNT - 1) % PAGE_COUNT; }, true);
         return true;
     }
 
     if(event->key == InputKeyRight) {
         with_view_model(
             App->ViewEpcInfo,
-            UHFRFIDTagModel * m,
-            { m->CurrentBank = (m->CurrentBank + 1) % PAGE_COUNT; },
-            true);
+            UHFRFIDTagModel * m, { m->CurrentBank = (m->CurrentBank + 1) % PAGE_COUNT; }, true);
         return true;
     }
 
@@ -119,7 +172,7 @@ void uhf_reader_view_epc_info_enter_callback(void* context) {
     with_view_model(
         App->ViewEpcInfo,
         UHFRFIDTagModel * m,
-        { m->CurrentBank = PAGE_EPC; },
+        { m->CurrentBank = PAGE_EPC; m->VScrollLine = 0; },
         false);
 
     // Load saved tag data from file
@@ -188,6 +241,7 @@ void view_epc_info_alloc(UHFReaderApp* App) {
     m->Crc        = furi_string_alloc_set("----");
     m->Pc         = furi_string_alloc_set("----");
     m->CurrentBank = PAGE_EPC;
+    m->VScrollLine = 0;
 
     view_dispatcher_add_view(App->ViewDispatcher, UHFReaderViewEpcInfo, App->ViewEpcInfo);
 }
