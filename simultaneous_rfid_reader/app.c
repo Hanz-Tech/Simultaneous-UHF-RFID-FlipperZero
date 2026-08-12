@@ -23,6 +23,11 @@ void uhf_reader_submenu_callback(void* context, uint32_t index) {
     UHFReaderApp* App = (UHFReaderApp*)context;
     switch(index) {
     case UHFReaderSubmenuIndexRead:
+        App->SingleReadMode = false;
+        view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewRead);
+        break;
+    case UHFReaderSubmenuIndexReadSingle:
+        App->SingleReadMode = true;
         view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewRead);
         break;
     case UHFReaderSubmenuIndexSaved:
@@ -48,7 +53,13 @@ void main_menu_alloc(UHFReaderApp* App) {
     App->Submenu = submenu_alloc();
     submenu_set_header(App->Submenu, "UHF RFID Reader");
     submenu_add_item(
-        App->Submenu, "Read", UHFReaderSubmenuIndexRead, uhf_reader_submenu_callback, App);
+        App->Submenu, "Read (Multi)", UHFReaderSubmenuIndexRead, uhf_reader_submenu_callback, App);
+    submenu_add_item(
+        App->Submenu,
+        "Read (Single)",
+        UHFReaderSubmenuIndexReadSingle,
+        uhf_reader_submenu_callback,
+        App);
     submenu_add_item(
         App->Submenu, "Saved", UHFReaderSubmenuIndexSaved, uhf_reader_submenu_callback, App);
     submenu_add_item(

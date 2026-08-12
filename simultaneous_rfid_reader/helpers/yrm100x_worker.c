@@ -37,13 +37,13 @@ UHFTag* send_polling_command(UHFWorker* uhf_worker) {
     M100ResponseType status;
     int poll_attempts = 0;
     do {
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             FURI_LOG_I(UHF_WK_TAG, "Polling aborted by user");
             uhf_tag_free(uhf_tag);
             return NULL;
         }
         poll_attempts++;
-        status = m100_single_poll(uhf_worker->module, uhf_tag);
+        status = m100_single_poll(uhf_worker->module, uhf_tag, uhf_worker);
         if(poll_attempts % 10 == 0) {
             FURI_LOG_I(UHF_WK_TAG, "Polling attempt %d, status=%d", poll_attempts, (int)status);
         }
@@ -67,7 +67,7 @@ UHFWorkerEvent read_bank_till_max_length(UHFWorker* uhf_worker, UHFTag* uhf_tag,
     int iterations = 0;
     FURI_LOG_I(UHF_WK_TAG, "Reading bank %d, binary search: 0-64 words", (int)bank);
     do {
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             FURI_LOG_I(UHF_WK_TAG, "Bank read aborted by user");
             return UHFWorkerEventAborted;
         }
@@ -99,7 +99,7 @@ UHFWorkerEvent read_bank_till_max_length(UHFWorker* uhf_worker, UHFTag* uhf_tag,
         // and try again rather than mistaking silence for the bank boundary.
         int retries = 0;
         do {
-            if(uhf_worker->state == UHFWorkerStateStop) {
+            if(uhf_worker_stop_requested(uhf_worker)) {
                 FURI_LOG_I(UHF_WK_TAG, "Bank read aborted by user");
                 return UHFWorkerEventAborted;
             }
@@ -171,7 +171,7 @@ UHFWorkerEvent read_single_card(UHFWorker* uhf_worker) {
     M100ResponseType set_status;
     int set_attempts = 0;
     do {
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             FURI_LOG_I(UHF_WK_TAG, "set_select aborted by user");
             return UHFWorkerEventAborted;
         }
@@ -225,7 +225,7 @@ UHFWorkerEvent deep_read_selected_card(UHFWorker* uhf_worker) {
     M100ResponseType set_status;
     int set_attempts = 0;
     do {
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             FURI_LOG_I(UHF_WK_TAG, "deep read set_select aborted by user");
             return UHFWorkerEventAborted;
         }
@@ -275,7 +275,7 @@ UHFWorkerEvent read_single_bank_selected(UHFWorker* uhf_worker) {
     M100ResponseType set_status;
     int set_attempts = 0;
     do {
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             FURI_LOG_I(UHF_WK_TAG, "single read set_select aborted by user");
             return UHFWorkerEventAborted;
         }
@@ -312,7 +312,7 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
         UHFTag* probe = uhf_tag_alloc();
         bool found = false;
         while(!found) {
-            if(uhf_worker->state == UHFWorkerStateStop) {
+            if(uhf_worker_stop_requested(uhf_worker)) {
                 uhf_tag_free(probe);
                 return UHFWorkerEventAborted;
             }
@@ -320,7 +320,7 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
                 uhf_tag_free(probe);
                 return UHFWorkerEventAborted;
             }
-            if(m100_single_poll(uhf_worker->module, probe) != M100SuccessResponse) {
+            if(m100_single_poll(uhf_worker->module, probe, uhf_worker) != M100SuccessResponse) {
                 continue;
             }
             if(probe->epc->size == target->epc->size &&
@@ -344,14 +344,14 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
     M100ResponseType rp_type;
     do {
         rp_type = m100_set_select(uhf_worker->module, uhf_tag_des);
-        if(uhf_worker->state == UHFWorkerStateStop) return UHFWorkerEventAborted;
+        if(uhf_worker_stop_requested(uhf_worker)) return UHFWorkerEventAborted;
         if(targeted && furi_get_tick() >= deadline) return UHFWorkerEventAborted;
         if(rp_type == M100SuccessResponse) break;
     } while(true);
     while(m100_is_write_mask_enabled(uhf_worker->module, WRITE_USER)) {
         rp_type = m100_write_label_data_storage(
             uhf_worker->module, uhf_tag_from, uhf_tag_des, UserBank, 0, uhf_worker->DefaultAP);
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             m100_disable_write_mask(uhf_worker->module, WRITE_USER);
             return UHFWorkerEventAborted;
         }
@@ -375,7 +375,7 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
     while(m100_is_write_mask_enabled(uhf_worker->module, WRITE_TID)) {
         rp_type = m100_write_label_data_storage(
             uhf_worker->module, uhf_tag_from, uhf_tag_des, TIDBank, 0, uhf_worker->DefaultAP);
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             m100_disable_write_mask(uhf_worker->module, WRITE_TID);
             return UHFWorkerEventAborted;
         }
@@ -414,7 +414,7 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
         uhf_tag_set_epc_pc(uhf_tag_from, new_pc);
         rp_type = m100_write_label_data_storage(
             uhf_worker->module, uhf_tag_from, uhf_tag_des, EPCBank, 0, uhf_worker->DefaultAP);
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             m100_disable_write_mask(uhf_worker->module, WRITE_EPC);
             return UHFWorkerEventAborted;
         }
@@ -462,7 +462,7 @@ UHFWorkerEvent write_single_card(UHFWorker* uhf_worker) {
                 uhf_worker->DefaultAP);
         }
 
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             m100_disable_write_mask(uhf_worker->module, WRITE_RFU);
             return UHFWorkerEventAborted;
         }
@@ -504,11 +504,52 @@ static UHFWorkerEvent detect_multiple_cards(UHFWorker* uhf_worker) {
     if(tag_count > 0) {
         return UHFWorkerEventSuccess;
     }
-    if(uhf_worker->state == UHFWorkerStateStop) {
+    if(uhf_worker_stop_requested(uhf_worker)) {
         FURI_LOG_I(UHF_WK_TAG, "detect_multiple_cards: aborted with no tags");
         return UHFWorkerEventAborted;
     }
     return UHFWorkerEventNoTagDetected;
+}
+
+// Live single-tag read (Read (Single)). Fires the single-poll inventory in a tight
+// retry loop — the aggressive duty cycle is what gives this mode its read range,
+// unlike the passive multi-poll stream. The tag list holds exactly one slot that is
+// refreshed in place on every successful poll, so the RSSI acts as a live proximity
+// meter. The worker never posts view events; the view's 300ms redraw timer snapshots
+// this slot for the live counter/RSSI, so the thread stays free of blocking
+// view-dispatcher sends and a stop-time join can never deadlock (ADR-0002). Runs
+// until the user stops the scan.
+static UHFWorkerEvent read_single_live(UHFWorker* uhf_worker) {
+    FURI_LOG_I(UHF_WK_TAG, "=== Starting read_single_live ===");
+    UHFTagWrapper* wrapper = uhf_worker->uhf_tag_wrapper;
+    uhf_tag_wrapper_reset_list(wrapper);
+
+    // One persistent slot, updated in place — never freed/reallocated mid-scan, so a
+    // concurrent read from the GUI thread can never hit a dangling pointer.
+    UHFTag* slot = uhf_tag_alloc();
+    bool published = false;
+
+    while(!uhf_worker_stop_requested(uhf_worker)) {
+        if(m100_single_poll(uhf_worker->module, slot, uhf_worker) != M100SuccessResponse) {
+            continue; // RF dropout / no tag this round — keep hammering for range
+        }
+        if(!published) {
+            wrapper->tags[0] = slot;
+            wrapper->tag_count = 1;
+            published = true;
+        }
+        // No view event here — the GUI-side redraw timer reads the slot in place for
+        // the live RSSI/counter. Keeping this loop free of view_dispatcher sends is
+        // what lets the stop-time join stay deadlock-free (ADR-0002).
+    }
+
+    if(!published) {
+        // Never caught a tag — slot was never handed to the wrapper, so free it here.
+        uhf_tag_free(slot);
+        return UHFWorkerEventAborted;
+    }
+    // slot is owned by the wrapper now (freed by reset_list / wrapper_free).
+    return UHFWorkerEventSuccess;
 }
 
 // Clone phase 1: poll for the first tag in field, giving up after 10 seconds.
@@ -520,7 +561,7 @@ static UHFWorkerEvent clone_scan_card(UHFWorker* uhf_worker) {
     const uint32_t timeout_ticks = furi_ms_to_ticks(10000);
     const uint32_t start_tick = furi_get_tick();
     do {
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             uhf_tag_free(uhf_tag);
             return UHFWorkerEventAborted;
         }
@@ -529,7 +570,7 @@ static UHFWorkerEvent clone_scan_card(UHFWorker* uhf_worker) {
             uhf_tag_free(uhf_tag);
             return UHFWorkerEventNoTagDetected;
         }
-        status = m100_single_poll(uhf_worker->module, uhf_tag);
+        status = m100_single_poll(uhf_worker->module, uhf_tag, uhf_worker);
     } while(status != M100SuccessResponse);
     uhf_tag_wrapper_set_tag(uhf_worker->uhf_tag_wrapper, uhf_tag);
     return UHFWorkerEventCardDetected;
@@ -549,7 +590,7 @@ static UHFWorkerEvent clone_write_card(UHFWorker* uhf_worker) {
 
     // Select the target tag
     do {
-        if(uhf_worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(uhf_worker)) {
             uhf_tag_free(target);
             return UHFWorkerEventAborted;
         }
@@ -560,7 +601,7 @@ static UHFWorkerEvent clone_write_card(UHFWorker* uhf_worker) {
     if(mask & WRITE_USER) {
         if(source->user->size > 0) {
             while(true) {
-                if(uhf_worker->state == UHFWorkerStateStop) {
+                if(uhf_worker_stop_requested(uhf_worker)) {
                     uhf_tag_free(target);
                     return UHFWorkerEventAborted;
                 }
@@ -579,7 +620,7 @@ static UHFWorkerEvent clone_write_card(UHFWorker* uhf_worker) {
     if(mask & WRITE_TID) {
         if(source->tid->size > 0) {
             while(true) {
-                if(uhf_worker->state == UHFWorkerStateStop) {
+                if(uhf_worker_stop_requested(uhf_worker)) {
                     uhf_tag_free(target);
                     return UHFWorkerEventAborted;
                 }
@@ -603,7 +644,7 @@ static UHFWorkerEvent clone_write_card(UHFWorker* uhf_worker) {
                 uint16_t new_pc = (base_pc & 0x07FF) | ((new_words & 0x1F) << 11);
                 uhf_tag_set_epc_pc(source, new_pc);
                 while(true) {
-                    if(uhf_worker->state == UHFWorkerStateStop) {
+                    if(uhf_worker_stop_requested(uhf_worker)) {
                         uhf_tag_free(target);
                         return UHFWorkerEventAborted;
                     }
@@ -623,7 +664,7 @@ static UHFWorkerEvent clone_write_card(UHFWorker* uhf_worker) {
     if(mask & WRITE_RFU) {
         if(source->reserved->size >= 4) {
             while(true) {
-                if(uhf_worker->state == UHFWorkerStateStop) {
+                if(uhf_worker_stop_requested(uhf_worker)) {
                     uhf_tag_free(target);
                     return UHFWorkerEventAborted;
                 }
@@ -645,6 +686,12 @@ static UHFWorkerEvent clone_write_card(UHFWorker* uhf_worker) {
 
 int32_t uhf_worker_task(void* ctx) {
     UHFWorker* uhf_worker = ctx;
+    // A reused FuriThread retains its flags. Clear the previous run's stop bit before
+    // dispatching, then honor a stop that arrived while this thread was starting.
+    furi_thread_flags_clear(UHF_WORKER_FLAG_STOP);
+    if(uhf_worker->state == UHFWorkerStateStop) {
+        return 0;
+    }
     if(uhf_worker->state == UHFWorkerStateVerify) {
         UHFWorkerEvent event = verify_module_connected(uhf_worker);
         uhf_worker->callback(event, uhf_worker->ctx);
@@ -653,6 +700,9 @@ int32_t uhf_worker_task(void* ctx) {
         uhf_worker->callback(event, uhf_worker->ctx);
     } else if(uhf_worker->state == UHFWorkerStateDetectMultiple) {
         UHFWorkerEvent event = detect_multiple_cards(uhf_worker);
+        uhf_worker->callback(event, uhf_worker->ctx);
+    } else if(uhf_worker->state == UHFWorkerStateReadSingleLive) {
+        UHFWorkerEvent event = read_single_live(uhf_worker);
         uhf_worker->callback(event, uhf_worker->ctx);
     } else if(uhf_worker->state == UHFWorkerStateDeepReadSelected) {
         UHFWorkerEvent event = deep_read_selected_card(uhf_worker);
@@ -691,8 +741,18 @@ UHFWorker* uhf_worker_alloc() {
     return uhf_worker;
 }
 
+bool uhf_worker_stop_requested(const UHFWorker* worker) {
+    furi_assert(worker);
+    return (furi_thread_flags_get() & UHF_WORKER_FLAG_STOP) != 0;
+}
+
 void uhf_worker_change_state(UHFWorker* worker, UHFWorkerState state) {
+    furi_assert(worker);
     worker->state = state;
+    if(state == UHFWorkerStateStop &&
+       furi_thread_get_state(worker->thread) != FuriThreadStateStopped) {
+        furi_thread_flags_set(furi_thread_get_id(worker->thread), UHF_WORKER_FLAG_STOP);
+    }
 }
 
 void uhf_worker_start(

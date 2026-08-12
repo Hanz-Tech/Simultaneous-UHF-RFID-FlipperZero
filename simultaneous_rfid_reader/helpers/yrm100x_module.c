@@ -38,7 +38,11 @@ static bool cmd_can_return_error_frame(uint8_t command) {
     }
 }
 
-static M100ResponseType setup_and_send_rx(M100Module* module, uint8_t* cmd, size_t cmd_length) {
+static M100ResponseType setup_and_send_rx_abortable(
+    M100Module* module,
+    uint8_t* cmd,
+    size_t cmd_length,
+    UHFWorker* worker) {
     UHFUart* uart = module->uart;
     Buffer* buffer = uart->buffer;
     // The module's response latency at the edge of read range swings from ~1ms to
@@ -66,12 +70,22 @@ static M100ResponseType setup_and_send_rx(M100Module* module, uint8_t* cmd, size
     uhf_uart_send_wait(uart, cmd, cmd_length);
 
     for(int frame = 0;; frame++) {
-        // wait for a frame by polling (tick is reset per byte by the ISR, so this
-        // bounds how long we wait for the module to START replying)
+        // Bound the receive wait as before, but cooperate with the scheduler and let
+        // live-read workers abort an in-flight poll. Without this check, the GUI can
+        // set Stop and then block forever joining a worker stuck in this byte loop.
         uhf_uart_tick_reset(uart);
         int tick_count = 0;
         while(!uhf_is_buffer_closed(buffer) && !uhf_uart_tick(uart)) {
             tick_count++;
+            if(worker && uhf_worker_stop_requested(worker)) {
+                return M100EmptyResponse;
+            }
+            // A true delay (not thread_yield) lets lower-priority timer/GUI service
+            // threads run. One tick per 4096 spins preserves polling duty cycle while
+            // keeping the live display responsive.
+            if((tick_count & 0xFFF) == 0) {
+                furi_delay_tick(1);
+            }
         }
         uint8_t* data = uhf_buffer_get_data(buffer);
         size_t length = uhf_buffer_get_size(buffer);
@@ -145,6 +159,11 @@ static M100ResponseType setup_and_send_rx(M100Module* module, uint8_t* cmd, size
         FURI_LOG_D(UHF_MOD_TAG, "Response: OK, len=%d", length);
         return M100SuccessResponse;
     }
+}
+
+static M100ResponseType
+    setup_and_send_rx(M100Module* module, uint8_t* cmd, size_t cmd_length) {
+    return setup_and_send_rx_abortable(module, cmd, cmd_length, NULL);
 }
 
 M100ModuleInfo* m100_module_info_alloc() {
@@ -237,9 +256,10 @@ char* m100_get_manufacturers(M100Module* module) {
     return _m100_info_helper(module, &module->info->manufacturer);
 }
 
-M100ResponseType m100_single_poll(M100Module* module, UHFTag* uhf_tag) {
-    M100ResponseType rp_type =
-        setup_and_send_rx(module, (uint8_t*)&CMD_SINGLE_POLLING.cmd[0], CMD_SINGLE_POLLING.length);
+M100ResponseType
+    m100_single_poll(M100Module* module, UHFTag* uhf_tag, UHFWorker* worker) {
+    M100ResponseType rp_type = setup_and_send_rx_abortable(
+        module, (uint8_t*)&CMD_SINGLE_POLLING.cmd[0], CMD_SINGLE_POLLING.length, worker);
     if(rp_type != M100SuccessResponse) return rp_type;
     uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
     uint16_t pc = data[6];
@@ -260,6 +280,9 @@ M100ResponseType m100_single_poll(M100Module* module, UHFTag* uhf_tag) {
     uhf_tag_set_epc_pc(uhf_tag, pc);
     uhf_tag_set_epc_crc(uhf_tag, crc);
     uhf_tag_set_epc(uhf_tag, data + 8, epc_len);
+    // RSSI is at data[5] per §2.3.2 frame layout (same as multi_poll) — used by
+    // the single-tag live read screen as a proximity/aiming meter.
+    uhf_tag->epc->rssi = (int8_t)data[5];
     return M100SuccessResponse;
 }
 
@@ -293,11 +316,11 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
     // -> Stop) or the tag list is full (UHF_TAG_WRAPPER_MAX_TAGS). When a tag is in
     // the field the module streams its EPC continuously and never emits a cmd=0xFF
     // no-tag frame, so there is deliberately NO time budget or "settle" cutoff — the
-    // session stays live so tags brought into range mid-scan are picked up. Each new
-    // unique EPC fires UHFWorkerEventCardDetected so the view can update the # EPCs
-    // counter and current tag in real time (issue #4).
+    // session stays live so tags brought into range mid-scan are picked up. Newly
+    // discovered EPCs are appended to the shared wrapper; the view's redraw timer
+    // reads it for the live # EPCs / current-tag display (issue #4).
     while(wrapper->tag_count < UHF_TAG_WRAPPER_MAX_TAGS) {
-        if(worker->state == UHFWorkerStateStop) {
+        if(uhf_worker_stop_requested(worker)) {
             FURI_LOG_I(UHF_MOD_TAG, "multi_poll: aborted by worker stop");
             break;
         }
@@ -310,7 +333,8 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         uint32_t t0 = furi_get_tick();
         while(!uhf_is_buffer_closed(buffer)) {
             if(furi_get_tick() - t0 >= 200) break;
-            if(worker->state == UHFWorkerStateStop) break;
+            if(uhf_worker_stop_requested(worker)) break;
+            furi_delay_tick(1);
         }
         bool frame_ready = uhf_is_buffer_closed(buffer);
 
@@ -407,12 +431,10 @@ M100ResponseType m100_multi_poll(M100Module* module, UHFTagWrapper* wrapper, UHF
         }
         result = M100SuccessResponse;
         FURI_LOG_I(UHF_MOD_TAG, "multi_poll: added unique tag %d", (int)wrapper->tag_count);
-
-        // Fire a live event so the view updates the # EPCs counter and current tag
-        // in real time (issue #4).
-        if(worker->callback) {
-            worker->callback(UHFWorkerEventCardDetected, worker->ctx);
-        }
+        // The view's own 300ms redraw timer snapshots the wrapper for the live
+        // # EPCs / current-tag display, so the worker never posts view events during
+        // a scan. That keeps this thread free of blocking view_dispatcher sends, so a
+        // GUI-thread join at stop can never deadlock against it (ADR-0002).
     }
 
     // Always stop the inventory round regardless of exit path

@@ -53,6 +53,13 @@ void uhf_reader_view_read_draw_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 70, 22, "Cur Tag:");
     canvas_draw_str(canvas, 115, 22, furi_string_get_cstr(XStr));
 
+    // Live RSSI meter — proximity/aiming feedback for the currently shown tag
+    // (the payoff of Read (Single); also handy in Read (Multi)).
+    if(MyModel->NumEpcsRead > 0) {
+        furi_string_printf(XStr, "R:%d", (int)MyModel->Rssi);
+        canvas_draw_str(canvas, 92, 11, furi_string_get_cstr(XStr));
+    }
+
     // Row 2 + 3: Full EPC value, wrapped at 20 chars per line (fits 128px display)
     const char* EpcStr = furi_string_get_cstr(MyModel->EpcValue);
     size_t EpcLen = strlen(EpcStr);
@@ -512,6 +519,14 @@ void uhf_reader_view_read_enter_callback(void* context) {
 void uhf_read_tag_worker_callback(UHFWorkerEvent event, void* ctx) {
     UHFReaderApp* App = (UHFReaderApp*)ctx;
 
+    // A stop request means the GUI-side stop handler (or view teardown) owns the UI
+    // update AND the thread join. Posting a view event here would block on a full
+    // dispatcher queue while that handler joins this worker → deadlock. Stay silent
+    // once a stop is pending (ADR-0002).
+    if(uhf_worker_stop_requested(App->YRM100XWorker)) {
+        return;
+    }
+
     // NOTE: do NOT call with_view_model() here — this function runs on the
     // worker OS thread, not the GUI thread. Triggering a ViewPort redraw from
     // the worker thread causes the ViewPort lockup warning. Scroll animation is
@@ -524,10 +539,6 @@ void uhf_read_tag_worker_callback(UHFWorkerEvent event, void* ctx) {
             dolphin_deed(DolphinDeedNfcReadSuccess);
         }
         view_dispatcher_send_custom_event(App->ViewDispatcher, UHFCustomEventWorkerExit);
-    } else if(event == UHFWorkerEventCardDetected) {
-        // Live update: a new unique EPC was appended to the wrapper during an active
-        // multi-poll session. Refresh the # EPCs counter and current tag in real time.
-        view_dispatcher_send_custom_event(App->ViewDispatcher, UHFCustomEventWorkerCardDetected);
     } else if(event == UHFWorkerEventAborted) {
         notification_message(App->Notifications, &uhf_sequence_blink_stop);
         view_dispatcher_send_custom_event(App->ViewDispatcher, UHFCustomEventWorkerExitAborted);
@@ -571,54 +582,50 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
     UHFReaderApp* App = (UHFReaderApp*)context;
 
     switch(event) {
-    //Redraw the screen
+    //Redraw the screen. The read view's 300ms periodic timer drives this; while a scan
+    //is active we snapshot the shared tag wrapper here — on the GUI thread — for the
+    //live # EPCs / current-tag / RSSI display. The worker never posts view events, so
+    //a stop-time join can never deadlock against it (ADR-0002).
     case UHFReaderEventIdRedrawScreen: {
-        bool Redraw = true;
-        with_view_model(App->ViewRead, UHFReaderConfigModel * _model, { UNUSED(_model); }, Redraw);
-        return true;
-    }
-
-    //Handles a live tag detection during an active multi-poll session
-    case UHFCustomEventWorkerCardDetected: {
-        bool Redraw = true;
         UHFTagWrapper* wrapper = App->YRM100XWorker->uhf_tag_wrapper;
         size_t count = wrapper->tag_count;
-        if(count == 0) {
-            return true;
+        if(App->IsReading && count > 0) {
+            App->NumberOfEpcsToRead = count;
+            // Most-recently discovered tag (single mode keeps exactly one slot).
+            UHFTag* latest = wrapper->tags[count - 1];
+            char* TempEpc = convertToHexString(latest->epc->data, latest->epc->size);
+            char* TempCrc = uint16_to_hex_string(latest->epc->crc);
+            char* TempPc = uint16_to_hex_string(latest->epc->pc);
+            with_view_model(
+                App->ViewRead,
+                UHFReaderConfigModel * _model,
+                {
+                    furi_string_set_str(_model->EpcValue, TempEpc);
+                    _model->NumEpcsRead = (uint32_t)count;
+                    _model->CurEpcIndex = (uint32_t)count;
+                    furi_string_set_str(_model->Crc, TempCrc);
+                    furi_string_set_str(_model->Pc, TempPc);
+                    _model->Rssi = latest->epc->rssi;
+                },
+                true);
+            // Keep the EPC dump view's live RSSI in sync for proximity feedback.
+            with_view_model(
+                App->ViewEpc,
+                UHFRFIDTagModel * _model,
+                {
+                    furi_string_set_str(_model->Epc, TempEpc);
+                    furi_string_set_str(_model->Crc, TempCrc);
+                    furi_string_set_str(_model->Pc, TempPc);
+                    _model->Rssi = latest->epc->rssi;
+                },
+                false);
+            free(TempEpc);
+            free(TempCrc);
+            free(TempPc);
+        } else {
+            with_view_model(
+                App->ViewRead, UHFReaderConfigModel * _model, { UNUSED(_model); }, true);
         }
-        App->NumberOfEpcsToRead = count;
-
-        // Show the most-recently discovered tag as it streams in
-        UHFTag* latest = wrapper->tags[count - 1];
-        char* TempEpc = convertToHexString(latest->epc->data, latest->epc->size);
-        char* TempCrc = uint16_to_hex_string(latest->epc->crc);
-        char* TempPc = uint16_to_hex_string(latest->epc->pc);
-
-        with_view_model(
-            App->ViewRead,
-            UHFReaderConfigModel * _model,
-            {
-                furi_string_set_str(_model->EpcValue, TempEpc);
-                _model->NumEpcsRead = (uint32_t)count;
-                _model->CurEpcIndex = (uint32_t)count;
-                furi_string_set_str(_model->Crc, TempCrc);
-                furi_string_set_str(_model->Pc, TempPc);
-            },
-            Redraw);
-        // Also push latest RSSI into the EPC dump model for live proximity feedback
-        with_view_model(
-            App->ViewEpc,
-            UHFRFIDTagModel * _model,
-            {
-                furi_string_set_str(_model->Epc, TempEpc);
-                furi_string_set_str(_model->Crc, TempCrc);
-                furi_string_set_str(_model->Pc, TempPc);
-                _model->Rssi = latest->epc->rssi;
-            },
-            false);
-        free(TempEpc);
-        free(TempCrc);
-        free(TempPc);
         return true;
     }
 
@@ -652,6 +659,7 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
                     _model->CurEpcIndex = 1;
                     furi_string_set_str(_model->Crc, TempCrc);
                     furi_string_set_str(_model->Pc, TempPc);
+                    _model->Rssi = first->epc->rssi;
                 },
                 Redraw);
             with_view_model(
@@ -689,6 +697,9 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
     case UHFCustomEventWorkerExitAborted: {
         bool Redraw = true;
         App->IsReading = false;
+        // Worker has already delivered its terminal event and exited — joining here
+        // is safe (no more view events will be posted) and readies it for restart.
+        uhf_worker_stop(App->YRM100XWorker);
         with_view_model(
             App->ViewRead,
             UHFReaderConfigModel * _model,
@@ -715,15 +726,13 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
 
         //Check if the app is reading
         if(App->IsReading) {
-            //Stop reading
+            //Stop reading — fully synchronous. The worker posts no view events during a
+            //scan, so joining it here cannot deadlock (ADR-0002). Once it returns, the
+            //shared wrapper is stable and the WorkerExit handler paints the final result.
             App->IsReading = false;
             notification_message(App->Notifications, &uhf_sequence_blink_stop);
             uhf_worker_stop(App->YRM100XWorker);
-            with_view_model(
-                App->ViewRead,
-                UHFReaderConfigModel * model,
-                { model->IsReading = App->IsReading; },
-                true);
+            view_dispatcher_send_custom_event(App->ViewDispatcher, UHFCustomEventWorkerExit);
         } else {
             //Check if the reader is connected before sending a read command
             if(App->ReaderConnected) {
@@ -788,6 +797,9 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
                         { model->IsReading = App->IsReading; },
                         true);
                 } else {
+                    // Join any prior finished/aborted run before restarting (safe: nothing
+                    // is producing at start time), so furi_thread_start never races a live thread.
+                    uhf_worker_stop(App->YRM100XWorker);
                     with_view_model(
                         App->ViewRead,
                         UHFReaderConfigModel * model,
@@ -795,7 +807,8 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
                         true);
                     uhf_worker_start(
                         App->YRM100XWorker,
-                        UHFWorkerStateDetectMultiple,
+                        App->SingleReadMode ? UHFWorkerStateReadSingleLive :
+                                              UHFWorkerStateDetectMultiple,
                         uhf_read_tag_worker_callback,
                         App);
                 }

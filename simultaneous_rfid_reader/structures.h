@@ -56,6 +56,7 @@ typedef enum {
     UHFReaderSubmenuIndexTagClone,
     UHFReaderSubmenuIndexUpdateAP,
     UHFReaderSubmenuIndexUpdateKP,
+    UHFReaderSubmenuIndexReadSingle,
 } UHFReaderSubmenuIndex;
 
 //Defining views for the application
@@ -101,7 +102,6 @@ typedef enum {
     UHFCustomEventWorkerExitAborted = 106,
     UHFCustomEventWorkerExitAccessDenied = 107,
     UHFCustomEventWorkerExitWrongPassword = 108,
-    UHFCustomEventWorkerCardDetected = 107,
     UHFCustomEventDeepReadDone = 108,
     UHFCustomEventDeepReadAborted = 109,
     UHFCustomEventSingleReadDone = 110,
@@ -294,6 +294,10 @@ typedef struct {
     bool DeepReadDone;
     bool DeepReadTimerExpired;
 
+    //True when the Read view is operating in single-tag live mode (Read (Single)),
+    //false for the default simultaneous multi-tag scan (Read (Multi)).
+    bool SingleReadMode;
+
     //Which path opened the shared Tag Action menu (live vs saved).
     UHFActionContext ActionContext;
 
@@ -394,6 +398,7 @@ typedef struct {
     FuriString* Setting3Value;
     FuriString* Pc;
     FuriString* Crc;
+    int32_t Rssi; // Live RSSI (dBm) of the currently shown tag; used as an aiming meter
     uint32_t ScrollOffset;
     char* ScrollingText;
     bool IsScrolling;
