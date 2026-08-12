@@ -511,40 +511,49 @@ static UHFWorkerEvent detect_multiple_cards(UHFWorker* uhf_worker) {
     return UHFWorkerEventNoTagDetected;
 }
 
-// Live single-tag read (Read (Single)). Fires the single-poll inventory in a tight
-// retry loop — the aggressive duty cycle is what gives this mode its read range,
-// unlike the passive multi-poll stream. The tag list holds exactly one slot that is
-// refreshed in place on every successful poll, so the RSSI acts as a live proximity
-// meter. The worker never posts view events; the view's 300ms redraw timer snapshots
-// this slot for the live counter/RSSI, so the thread stays free of blocking
-// view-dispatcher sends and a stop-time join can never deadlock (ADR-0002). Runs
-// until the user stops the scan.
+// Live single-tag read (Read (Single)). The first successful poll defines the target
+// for the entire scan. Later polls use a separate probe and software filtering: only
+// a matching EPC may update the published slot, and it updates RSSI only. No hardware
+// Select state is changed, so later Multi scans remain unaffected. The aggressive
+// single-poll duty cycle preserves range; the view's 300ms timer snapshots the stable
+// slot for live RSSI without worker-to-GUI events (ADR-0002).
 static UHFWorkerEvent read_single_live(UHFWorker* uhf_worker) {
     FURI_LOG_I(UHF_WK_TAG, "=== Starting read_single_live ===");
     UHFTagWrapper* wrapper = uhf_worker->uhf_tag_wrapper;
     uhf_tag_wrapper_reset_list(wrapper);
 
-    // One persistent slot, updated in place — never freed/reallocated mid-scan, so a
-    // concurrent read from the GUI thread can never hit a dangling pointer.
+    // The published slot has a fixed EPC for its entire lifetime. Poll into probe so
+    // another responder can never overwrite data concurrently displayed by the GUI.
     UHFTag* slot = uhf_tag_alloc();
+    UHFTag* probe = uhf_tag_alloc();
     bool published = false;
 
     while(!uhf_worker_stop_requested(uhf_worker)) {
-        if(m100_single_poll(uhf_worker->module, slot, uhf_worker) != M100SuccessResponse) {
-            continue; // RF dropout / no tag this round — keep hammering for range
+        if(m100_single_poll(uhf_worker->module, probe, uhf_worker) != M100SuccessResponse) {
+            continue; // No valid tag this round; keep hammering for maximum range.
         }
+
         if(!published) {
+            uhf_tag_set_epc(slot, probe->epc->data, probe->epc->size);
+            uhf_tag_set_epc_pc(slot, probe->epc->pc);
+            uhf_tag_set_epc_crc(slot, probe->epc->crc);
+            slot->epc->rssi = probe->epc->rssi;
             wrapper->tags[0] = slot;
             wrapper->tag_count = 1;
             published = true;
+            continue;
         }
-        // No view event here — the GUI-side redraw timer reads the slot in place for
-        // the live RSSI/counter. Keeping this loop free of view_dispatcher sends is
-        // what lets the stop-time join stay deadlock-free (ADR-0002).
+
+        // Ignore every later responder except the first EPC. For the locked tag,
+        // refresh signal strength only; EPC/PC/CRC remain immutable on screen.
+        if(probe->epc->size == slot->epc->size &&
+           memcmp(probe->epc->data, slot->epc->data, slot->epc->size) == 0) {
+            slot->epc->rssi = probe->epc->rssi;
+        }
     }
 
+    uhf_tag_free(probe);
     if(!published) {
-        // Never caught a tag — slot was never handed to the wrapper, so free it here.
         uhf_tag_free(slot);
         return UHFWorkerEventAborted;
     }

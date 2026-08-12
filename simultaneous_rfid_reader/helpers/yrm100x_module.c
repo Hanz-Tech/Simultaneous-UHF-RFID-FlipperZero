@@ -262,12 +262,20 @@ M100ResponseType
         module, (uint8_t*)&CMD_SINGLE_POLLING.cmd[0], CMD_SINGLE_POLLING.length, worker);
     if(rp_type != M100SuccessResponse) return rp_type;
     uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
+    size_t response_size = uhf_buffer_get_size(module->uart->buffer);
+    // Single-poll no-tag replies use cmd=0xFF and contain no PC/EPC/CRC fields.
+    // Reject them before indexing data[6+] so they cannot become the software lock.
+    if(response_size < 8) return M100ValidationFail;
+    if(data[2] == FRAME_ERROR_CMD) return M100NoTagResponse;
     uint16_t pc = data[6];
     uint16_t crc = 0;
     // mask out epc length from protocol control
     size_t epc_len = pc;
     epc_len >>= 3;
     epc_len *= 2;
+    if(epc_len > EPC_MAX_BANK_SIZE || response_size < epc_len + 12) {
+        return M100ValidationFail;
+    }
     // get protocol control
     pc <<= 8;
     pc += data[7];

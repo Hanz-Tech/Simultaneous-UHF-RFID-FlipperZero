@@ -9,7 +9,7 @@ The identifier a UHF tag backscatters when polled; the primary thing the app col
 _Avoid_: UID, tag ID (that's the TID)
 
 **Single Poll**:
-Reading one tag by firing the poll command in a tight retry loop until a round succeeds. Favors read range and a lone tag.
+Reading one tag by firing the poll command in a tight retry loop for maximum range. The first returned EPC remains the scan target; later responses are software-filtered so only that EPC can refresh its live RSSI.
 _Avoid_: single read, detect single
 
 **Multi Poll** (a.k.a. **Simultaneous Read**):
