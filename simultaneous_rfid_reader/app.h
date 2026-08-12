@@ -22,7 +22,7 @@
 #define WRITE_EPC_FAIL     "Write Failed!"
 
 //Content for the about screen
-#define UHF_RFID_VERSION_APP   "1.3.2"
+#define UHF_RFID_VERSION_APP   "1.3.3"
 #define UHF_RFID_MEM_DEVELOPER "@Haffnerriley & HanzTech"
 #define UHF_RFID_GITHUB        "https://github.com/haffnerriley"
 #define UHF_RFID_NAME          "\e#\e!       UHF RFID Reader        \e!\n"

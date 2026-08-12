@@ -318,6 +318,29 @@ void uhf_reader_setting_1_change(VariableItem* Item) {
         variable_item_set_current_value_index(App->AntennaSelection, App->Setting3Index);
 
         if(App->UHFModuleType == YRM100X_MODULE) {
+            WorkingRegion actual_region;
+            if(m100_get_working_region(App->YRM100XWorker->module, &actual_region)) {
+                switch(actual_region) {
+                case WR_US:
+                    App->SettingRegionIndex = USA_REGION;
+                    break;
+                case WR_EU:
+                    App->SettingRegionIndex = EU_REGION;
+                    break;
+                case WR_KOREA:
+                    App->SettingRegionIndex = KOREA_REGION;
+                    break;
+                case WR_CHINA_800:
+                    App->SettingRegionIndex = CHINA_800_REGION;
+                    break;
+                case WR_CHINA_900:
+                    App->SettingRegionIndex = CHINA_900_REGION;
+                    break;
+                }
+                App->UHFRegionType = App->SettingRegionIndex;
+                variable_item_set_current_value_index(
+                    App->RegionSelection, App->SettingRegionIndex);
+            }
             uint16_t power_raw = 0;
             if(m100_get_transmitting_power(App->YRM100XWorker->module, &power_raw)) {
                 int32_t power_dbm = ((int32_t)power_raw + 50) / 100;
@@ -654,36 +677,24 @@ void uhf_reader_region_setting_change(VariableItem* Item) {
         show_locked_notification(App);
         return;
     }
-    if(App->ReaderConnected) {
-        if(Index == 1) {
-            //Mark EU as being used
-            App->UHFRegionType = EU_REGION;
-        } else if(Index == 2) {
-            //Mark Korea as being used
-            App->UHFRegionType = KOREA_REGION;
-        } else if(Index == 3) {
-            //Mark Korea as being used
-            App->UHFRegionType = CHINA_800_REGION;
-        } else if(Index == 4) {
-            //Mark Korea as being used
-            App->UHFRegionType = CHINA_900_REGION;
-        } else {
-            //Mark the M6E as being used
-            App->UHFRegionType = USA_REGION;
-        }
+    if(!App->ReaderConnected) return;
 
-        if(App->UHFModuleType == YRM100X_MODULE) {
-            WorkingRegion region = WORKING_REGIONS[Index];
-            if(m100_set_working_region(App->YRM100XWorker->module, region)) {
-                variable_item_set_current_value_text(Item, App->SettingRegionNames[Index]);
-            }
-
-        } else {
-            //PLACE COMMAND HERE TO CHANGE THE REGION FOR M6E and M7E
-            uart_helper_send(App->UartHelper, "Region\n", 7);
-            variable_item_set_current_value_text(Item, App->SettingRegionNames[Index]);
+    if(App->UHFModuleType == YRM100X_MODULE) {
+        WorkingRegion region = WORKING_REGIONS[Index];
+        if(!m100_set_working_region(App->YRM100XWorker->module, region)) {
+            variable_item_set_current_value_index(Item, App->SettingRegionIndex);
+            show_command_error_notification(App);
+            return;
         }
+    } else {
+        //PLACE COMMAND HERE TO CHANGE THE REGION FOR M6E and M7E
+        uart_helper_send(App->UartHelper, "Region\n", 7);
     }
+
+    // Region constants intentionally match the configuration-menu index order.
+    App->SettingRegionIndex = Index;
+    App->UHFRegionType = Index;
+    variable_item_set_current_value_text(Item, App->SettingRegionNames[Index]);
 }
 
 void uhf_reader_session_setting_change(VariableItem* Item) {

@@ -979,8 +979,30 @@ bool m100_set_working_region(M100Module* module, WorkingRegion region) {
     memcpy(cmd, CMD_SET_WORK_AREA.cmd, length);
     cmd[5] = (uint8_t)region;
     cmd[length - 2] = checksum(cmd + 1, length - 3);
-    setup_and_send_rx(module, cmd, length);
+    M100ResponseType result = setup_and_send_rx(module, cmd, length);
+    if(result != M100SuccessResponse) return false;
+    uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
+    size_t response_length = uhf_buffer_get_size(module->uart->buffer);
+    if(response_length < 8 || data[2] != 0x07 || data[5] != 0x00) return false;
     module->region = region;
+    return true;
+}
+
+bool m100_get_working_region(M100Module* module, WorkingRegion* region) {
+    M100ResponseType result = setup_and_send_rx(
+        module, (uint8_t*)&CMD_GET_WORK_AREA.cmd[0], CMD_GET_WORK_AREA.length);
+    if(result != M100SuccessResponse) return false;
+    uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
+    size_t length = uhf_buffer_get_size(module->uart->buffer);
+    if(length < 8 || data[2] != 0x08) return false;
+
+    WorkingRegion actual = (WorkingRegion)data[5];
+    if(actual != WR_CHINA_900 && actual != WR_US && actual != WR_EU &&
+       actual != WR_CHINA_800 && actual != WR_KOREA) {
+        return false;
+    }
+    module->region = actual;
+    *region = actual;
     return true;
 }
 

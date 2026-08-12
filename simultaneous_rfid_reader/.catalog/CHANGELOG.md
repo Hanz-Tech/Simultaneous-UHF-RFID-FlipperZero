@@ -1,5 +1,8 @@
 Changelog:
 
+Unreleased:
+- Fix YRM100X region selection mapping and load the reader's actual retained region on connect; selecting USA now sends the documented USA region code instead of China 900.
+
 v1.0 - 2024-05-29:
 - Initial release of Simultaneous UHF RFID Flipper Zero App.
 
