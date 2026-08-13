@@ -293,6 +293,9 @@ typedef struct {
     bool DeepReading;
     bool DeepReadDone;
     bool DeepReadTimerExpired;
+    // True once reader-owned defaults have been adopted or a saved profile was loaded.
+    // A false profile may still persist app-only preferences such as Save on Write.
+    bool SettingsInitialized;
 
     //True when the Read view is operating in single-tag live mode (Read (Single)),
     //false for the default simultaneous multi-tag scan (Read (Multi)).

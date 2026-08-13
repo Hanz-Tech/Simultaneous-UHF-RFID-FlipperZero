@@ -61,12 +61,12 @@ void view_about_alloc(UHFReaderApp* App) {
         "Next, you may toggle other reader settings.\n"
         " The configuration menu has the following options:\n"
         "- Select reader module\n"
-        "- Set the power of the reader(M6E/M7E power range 0-2700, YRM100X 1-27)\n"
+        "- Set reader power (YRM1002: 15-26 dBm)\n"
         "- Change the Baud Rate\n"
         "- Change the Region\n"
         "- Set default access password for reading/writing\n"
         "- Set write save mode (Turn on to save and update stored fields of tag written)\n"
-        "- Save configuration settings (Future)\n"
+        "- Region, power, session, target, access password, and write-save mode persist across power cycles\n"
         "- Set/Detect UHF RFID Tag Type (Future)\n"
         "- Toggle the antenna selection (Future for M6E and M7E Only)\n\n");
         

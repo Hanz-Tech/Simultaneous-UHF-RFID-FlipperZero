@@ -28,11 +28,13 @@
 - Save a tag from the scan screen (**Left**), EPC dump (**Left**)
 
 #### Configuration
-- Set power level from 0 - 27 dBm, in increment of 1 dBm
-- Set Session S0,S1,S2,S3
+- Set YRM1002 power from 15-26 dBm in 1 dBm increments
+- Set Session S0, S1, S2, or S3
 - Set Target A/B
-- Flipper will load the current configuration in the YRM100 reader during first connect instead of using default 
-- Flipper will check the ACK from the YRM100 reader when setting configuration
+- On first connect after upgrading, adopt the YRM100 reader's current region, power, session, and target
+- Persist region, power, session, target, default access password, and save-on-write mode on the Flipper
+- Reapply and read back the saved reader profile on every later connection
+- Validate reader acknowledgements when setting configuration
 
 
 ## Overview

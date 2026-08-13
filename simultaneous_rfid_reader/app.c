@@ -139,6 +139,7 @@ static UHFReaderApp* uhf_reader_app_alloc() {
         App->YRM100XWorker = uhf_worker_alloc();
         UHFTagWrapper* WorkerTagWrapper = uhf_tag_wrapper_alloc();
         App->YRM100XWorker->uhf_tag_wrapper = WorkerTagWrapper;
+        App->YRM100XWorker->DefaultAP = bytes_to_uint32(App->ApTempBuffer, 4);
         m100_disable_write_mask(App->YRM100XWorker->module, WRITE_EPC);
     } else {
         //Create the UART helper object used to communicate with the RPi Zero via UART

@@ -1026,10 +1026,12 @@ bool m100_set_transmitting_power(M100Module* module, uint16_t power) {
     cmd[6] = power & 0xFF;
     cmd[length - 2] = checksum(cmd + 1, length - 3);
     M100ResponseType result = setup_and_send_rx(module, cmd, length);
-    if(result == M100SuccessResponse) {
-        module->transmitting_power = power;
-    }
-    return result == M100SuccessResponse;
+    if(result != M100SuccessResponse) return false;
+    uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
+    size_t response_length = uhf_buffer_get_size(module->uart->buffer);
+    if(response_length < 8 || data[2] != 0xB6 || data[5] != 0x00) return false;
+    module->transmitting_power = power;
+    return true;
 }
 
 bool m100_get_query_params(M100Module* module, uint8_t* session, uint8_t* target) {
@@ -1056,7 +1058,10 @@ bool m100_set_query_params(M100Module* module, uint8_t session, uint8_t target) 
     uint8_t cmd[9] = {0xBB, 0x00, 0x0E, 0x00, 0x02, b0, b1, 0x00, 0x7E};
     cmd[7] = checksum(cmd + 1, 6); // sum(Type..params) & 0xFF
     M100ResponseType result = setup_and_send_rx(module, cmd, sizeof(cmd));
-    return result == M100SuccessResponse;
+    if(result != M100SuccessResponse) return false;
+    uint8_t* data = uhf_buffer_get_data(module->uart->buffer);
+    size_t length = uhf_buffer_get_size(module->uart->buffer);
+    return length >= 8 && data[2] == 0x0E && data[5] == 0x00;
 }
 
 bool m100_set_freq_hopping(M100Module* module, bool hopping) {

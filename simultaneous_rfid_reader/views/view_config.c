@@ -1,4 +1,102 @@
 #include "view_config.h"
+#include "../helpers/uhf_reader_settings.h"
+
+static void uhf_reader_settings_snapshot(
+    const UHFReaderApp* App,
+    UHFReaderSettings* settings) {
+    settings->reader_profile_initialized = App->SettingsInitialized;
+    settings->save_on_write_index = App->SettingSavingIndex;
+    settings->region_index = App->SettingRegionIndex;
+    settings->power_dbm = App->SettingPowerIndex;
+    settings->session_index = App->SettingSessionIndex;
+    settings->target_index = App->SettingTargetIndex;
+    settings->default_access_password = bytes_to_uint32(App->ApTempBuffer, 4);
+}
+
+static bool uhf_reader_settings_save_current(UHFReaderApp* App) {
+    UHFReaderSettings settings;
+    uhf_reader_settings_snapshot(App, &settings);
+    if(!uhf_reader_settings_save(App->TagStorage, &settings)) {
+        FURI_LOG_E(TAG, "Failed to save reader settings");
+        return false;
+    }
+    return true;
+}
+
+static uint8_t uhf_reader_region_index(WorkingRegion region) {
+    switch(region) {
+    case WR_US:
+        return USA_REGION;
+    case WR_EU:
+        return EU_REGION;
+    case WR_KOREA:
+        return KOREA_REGION;
+    case WR_CHINA_800:
+        return CHINA_800_REGION;
+    case WR_CHINA_900:
+        return CHINA_900_REGION;
+    default:
+        return USA_REGION;
+    }
+}
+
+static bool uhf_reader_settings_adopt_yrm100x(UHFReaderApp* App) {
+    WorkingRegion region;
+    uint16_t power_raw = 0;
+    uint8_t session = 0;
+    uint8_t target = 0;
+    if(!m100_get_working_region(App->YRM100XWorker->module, &region) ||
+       !m100_get_transmitting_power(App->YRM100XWorker->module, &power_raw) ||
+       !m100_get_query_params(App->YRM100XWorker->module, &session, &target)) {
+        return false;
+    }
+
+    uint32_t power_dbm = (power_raw + 50U) / 100U;
+    if(power_dbm < UHF_READER_MIN_POWER_DBM || power_dbm > UHF_READER_MAX_POWER_DBM) {
+        return false;
+    }
+    App->SettingRegionIndex = uhf_reader_region_index(region);
+    App->UHFRegionType = App->SettingRegionIndex;
+    App->SettingPowerIndex = (uint8_t)power_dbm;
+    App->SettingSessionIndex = session;
+    App->SettingTargetIndex = target;
+    App->SettingsInitialized = true;
+    App->YRM100XWorker->DefaultAP = bytes_to_uint32(App->ApTempBuffer, 4);
+    if(!uhf_reader_settings_save_current(App)) {
+        App->SettingsInitialized = false;
+        return false;
+    }
+    return true;
+}
+
+static bool uhf_reader_settings_apply_yrm100x(UHFReaderApp* App) {
+    WorkingRegion expected_region = WORKING_REGIONS[App->SettingRegionIndex];
+    WorkingRegion actual_region;
+    uint16_t expected_power = (uint16_t)App->SettingPowerIndex * 100U;
+    uint16_t actual_power = 0;
+    uint8_t actual_session = 0;
+    uint8_t actual_target = 0;
+
+    if(!m100_set_working_region(App->YRM100XWorker->module, expected_region) ||
+       !m100_get_working_region(App->YRM100XWorker->module, &actual_region) ||
+       actual_region != expected_region ||
+       !m100_set_transmitting_power(App->YRM100XWorker->module, expected_power) ||
+       !m100_get_transmitting_power(App->YRM100XWorker->module, &actual_power) ||
+       actual_power != expected_power ||
+       !m100_set_query_params(
+           App->YRM100XWorker->module,
+           App->SettingSessionIndex,
+           App->SettingTargetIndex) ||
+       !m100_get_query_params(
+           App->YRM100XWorker->module, &actual_session, &actual_target) ||
+       actual_session != App->SettingSessionIndex || actual_target != App->SettingTargetIndex) {
+        return false;
+    }
+
+    App->UHFRegionType = App->SettingRegionIndex;
+    App->YRM100XWorker->DefaultAP = bytes_to_uint32(App->ApTempBuffer, 4);
+    return true;
+}
 
 /**
  * @brief      Callback for returning to the configuration screen.
@@ -66,6 +164,14 @@ uint32_t uhf_reader_navigation_config_submenu_callback(void* context) {
 */
 void view_config_alloc(UHFReaderApp* App) {
     ap_menu_alloc(App);
+    UHFReaderSettings settings;
+    uhf_reader_settings_set_defaults(&settings);
+    uhf_reader_settings_load(App->TagStorage, &settings);
+    App->SettingsInitialized = settings.reader_profile_initialized;
+    App->ApTempBuffer[0] = (uint8_t)(settings.default_access_password >> 24);
+    App->ApTempBuffer[1] = (uint8_t)(settings.default_access_password >> 16);
+    App->ApTempBuffer[2] = (uint8_t)(settings.default_access_password >> 8);
+    App->ApTempBuffer[3] = (uint8_t)settings.default_access_password;
 
     //Creating the variable item list
     App->VariableItemListConfig = variable_item_list_alloc();
@@ -110,7 +216,9 @@ void view_config_alloc(UHFReaderApp* App) {
     App->SettingSavingNames[0] = "No";
     App->SettingSavingNames[1] = "Yes";
     App->SettingSavingConfigLabel = "Save on Write";
-    App->UHFSaveType = NO_SAVE_ON_WRITE;
+    App->SettingSavingIndex = settings.save_on_write_index;
+    App->UHFSaveType =
+        App->SettingSavingIndex == 1 ? YES_SAVE_ON_WRITE : NO_SAVE_ON_WRITE;
 
     //Setting the available regions
     App->SettingRegionValues[0] = 1;
@@ -124,12 +232,18 @@ void view_config_alloc(UHFReaderApp* App) {
     App->SettingRegionNames[3] = "China 800";
     App->SettingRegionNames[4] = "China 900";
     App->SettingRegionConfigLabel = "Region";
-    App->UHFRegionType = USA_REGION;
+    App->SettingRegionIndex = settings.region_index;
+    App->UHFRegionType = App->SettingRegionIndex;
 
     //Setting the config menu labels for the default read access password
     App->ReadAccessPasswordLabel = strdup("Default AP");
     App->AccessPasswordPlaceHolder = strdup("Enter Access Password!");
-    App->DefaultAccessPassword = strdup("00000000");
+    App->DefaultAccessPassword = malloc(9);
+    snprintf(
+        App->DefaultAccessPassword,
+        9,
+        "%08lX",
+        (unsigned long)settings.default_access_password);
 
     // Add setting 1 to variable item list
     VariableItem* Item = variable_item_list_add(
@@ -165,13 +279,13 @@ void view_config_alloc(UHFReaderApp* App) {
     App->SettingSessionNames[2] = "S2";
     App->SettingSessionNames[3] = "S3";
     App->SettingSessionConfigLabel = "Session";
-    App->SettingSessionIndex = 2; // default S2
+    App->SettingSessionIndex = settings.session_index;
 
     //Setting the available targets (A/B, default A)
     App->SettingTargetNames[0] = "A";
     App->SettingTargetNames[1] = "B";
     App->SettingTargetConfigLabel = "Target";
-    App->SettingTargetIndex = 0; // default A
+    App->SettingTargetIndex = settings.target_index;
 
     App->num_items = 7; // Adjust based on total number of lockable items
     App->item_locks = malloc(sizeof(VariableItemLock) * 7);
@@ -181,10 +295,11 @@ void view_config_alloc(UHFReaderApp* App) {
         App->item_locks[i].locked = true;
     }
 
-    //Creating the power setting (0-27 dBm, 1 dBm steps)
-    App->SettingPowerIndex = 15; // default 15 dBm
+    // YRM1002 supports 15-26 dBm. Keep index==dBm so existing M6E/M7E callbacks
+    // retain their current representation while YRM validation rejects lower values.
+    App->SettingPowerIndex = settings.power_dbm;
     App->Setting2Item = variable_item_list_add(
-        App->VariableItemListConfig, App->Setting2ConfigLabel, 28, uhf_reader_power_setting_change, App);
+        App->VariableItemListConfig, App->Setting2ConfigLabel, 27, uhf_reader_power_setting_change, App);
     variable_item_list_set_enter_callback(
         App->VariableItemListConfig, uhf_reader_setting_item_clicked, App);
     variable_item_set_current_value_index(App->Setting2Item, App->SettingPowerIndex);
@@ -209,8 +324,6 @@ void view_config_alloc(UHFReaderApp* App) {
         uhf_reader_region_setting_change,
         App);
 
-    //Default index for the baud selection option
-    App->SettingRegionIndex = 0;
     variable_item_set_current_value_index(App->RegionSelection, App->SettingRegionIndex);
     variable_item_set_current_value_text(App->RegionSelection, "LOCKED");
     //Default access password input for reading and writing to the tag, or locking
@@ -227,8 +340,6 @@ void view_config_alloc(UHFReaderApp* App) {
         uhf_reader_save_setting_change,
         App);
 
-    //Default index for the module selection option
-    App->SettingSavingIndex = 0;
     variable_item_set_current_value_index(SavingSelection, App->SettingSavingIndex);
     variable_item_set_current_value_text(
         SavingSelection, App->SettingSavingNames[App->SettingSavingIndex]);
@@ -291,112 +402,71 @@ uint32_t uhf_reader_navigation_configure_callback(void* context) {
 */
 void uhf_reader_setting_1_change(VariableItem* Item) {
     UHFReaderApp* App = variable_item_get_context(Item);
-
-    //Getting the index
     uint8_t Index = variable_item_get_current_value_index(Item);
 
-    //Will eventually do some sort of check to confirm successful connection
-    if(App->ReaderConnected == false) {
-        if(App->UHFModuleType != YRM100X_MODULE) {
+    if(!App->ReaderConnected) {
+        bool connected = true;
+        if(App->UHFModuleType == YRM100X_MODULE) {
+            connected = false;
+            // M100/QM100 wake consumes the wake byte and may drop the first command
+            // after wake. Three idempotent attempts cover both losses and the real
+            // profile sync without requiring another UI toggle.
+            for(uint8_t attempt = 0; attempt < 3 && !connected; attempt++) {
+                connected = App->SettingsInitialized ? uhf_reader_settings_apply_yrm100x(App) :
+                                                       uhf_reader_settings_adopt_yrm100x(App);
+            }
+        } else {
             uart_helper_send(App->UartHelper, "C\n", 2);
         }
 
-        App->ReaderConnected = true;
-        // Unlock all items except module and save selection
-        for(size_t i = 0; i < App->num_items; i++) {
-            App->item_locks[i].locked = false;
-        }
-
-        // Update UI for all items to show unlocked state
-
-        //Default index for the baud selection option
-        App->SettingBaudIndex = 1;
-        App->SettingRegionIndex = 0;
-        App->Setting3Index = 0;
-        variable_item_set_current_value_index(App->RegionSelection, App->SettingRegionIndex);
-        variable_item_set_current_value_index(App->BaudSelection, App->SettingBaudIndex);
-        variable_item_set_current_value_index(App->AntennaSelection, App->Setting3Index);
-
-        if(App->UHFModuleType == YRM100X_MODULE) {
-            WorkingRegion actual_region;
-            if(m100_get_working_region(App->YRM100XWorker->module, &actual_region)) {
-                switch(actual_region) {
-                case WR_US:
-                    App->SettingRegionIndex = USA_REGION;
-                    break;
-                case WR_EU:
-                    App->SettingRegionIndex = EU_REGION;
-                    break;
-                case WR_KOREA:
-                    App->SettingRegionIndex = KOREA_REGION;
-                    break;
-                case WR_CHINA_800:
-                    App->SettingRegionIndex = CHINA_800_REGION;
-                    break;
-                case WR_CHINA_900:
-                    App->SettingRegionIndex = CHINA_900_REGION;
-                    break;
-                }
-                App->UHFRegionType = App->SettingRegionIndex;
-                variable_item_set_current_value_index(
-                    App->RegionSelection, App->SettingRegionIndex);
+        if(!connected) {
+            Index = 0;
+            variable_item_set_current_value_index(Item, Index);
+            show_command_error_notification(App);
+        } else {
+            App->ReaderConnected = true;
+            for(size_t i = 0; i < App->num_items; i++) {
+                App->item_locks[i].locked = false;
             }
-            uint16_t power_raw = 0;
-            if(m100_get_transmitting_power(App->YRM100XWorker->module, &power_raw)) {
-                int32_t power_dbm = ((int32_t)power_raw + 50) / 100;
-                if(power_dbm < 0) power_dbm = 0;
-                if(power_dbm > 27) power_dbm = 27;
-                App->SettingPowerIndex = (uint8_t)power_dbm;
-            } else {
-                m100_set_transmitting_power(
-                    App->YRM100XWorker->module, (uint16_t)App->SettingPowerIndex * 100);
-            }
+
+            App->SettingBaudIndex = 1;
+            App->Setting3Index = 0;
+            variable_item_set_current_value_index(
+                App->Setting2Item, App->SettingPowerIndex);
+            variable_item_set_current_value_index(
+                App->RegionSelection, App->SettingRegionIndex);
+            variable_item_set_current_value_index(
+                App->BaudSelection, App->SettingBaudIndex);
+            variable_item_set_current_value_index(
+                App->AntennaSelection, App->Setting3Index);
+            variable_item_set_current_value_index(
+                App->SessionSelection, App->SettingSessionIndex);
+            variable_item_set_current_value_index(
+                App->TargetSelection, App->SettingTargetIndex);
+
+            char power_label[8];
+            snprintf(power_label, sizeof(power_label), "%ddBm", App->SettingPowerIndex);
+            variable_item_set_current_value_text(App->Setting2Item, power_label);
+            variable_item_set_current_value_text(
+                App->BaudSelection, App->SettingBaudNames[App->SettingBaudIndex]);
+            variable_item_set_current_value_text(
+                App->RegionSelection, App->SettingRegionNames[App->SettingRegionIndex]);
+            variable_item_set_current_value_text(
+                App->SettingApPwdItem, furi_string_get_cstr(App->DefaultAccessPwdStr));
+            variable_item_set_current_value_text(
+                App->AntennaSelection, App->Setting3Names[App->Setting3Index]);
+            variable_item_set_current_value_text(
+                App->SessionSelection, App->SettingSessionNames[App->SettingSessionIndex]);
+            variable_item_set_current_value_text(
+                App->TargetSelection, App->SettingTargetNames[App->SettingTargetIndex]);
+            variable_item_list_set_enter_callback(
+                App->VariableItemListConfig, uhf_reader_setting_item_clicked, App);
         }
-        char power_label[8];
-        snprintf(power_label, sizeof(power_label), "%ddBm", App->SettingPowerIndex);
-        variable_item_set_current_value_index(App->Setting2Item, App->SettingPowerIndex);
-        variable_item_set_current_value_text(App->Setting2Item, power_label);
-        variable_item_list_set_enter_callback(
-            App->VariableItemListConfig, uhf_reader_setting_item_clicked, App);
-
-        variable_item_set_current_value_text(
-            App->BaudSelection, App->SettingBaudNames[App->SettingBaudIndex]);
-        variable_item_set_current_value_text(
-            App->RegionSelection, App->SettingRegionNames[App->SettingRegionIndex]);
-
-        variable_item_set_current_value_text(
-            App->SettingApPwdItem, furi_string_get_cstr(App->DefaultAccessPwdStr));
-        variable_item_list_set_enter_callback(
-            App->VariableItemListConfig, uhf_reader_setting_item_clicked, App);
-
-        variable_item_set_current_value_text(
-            App->AntennaSelection, App->Setting3Names[App->Setting3Index]);
-
-        if(App->UHFModuleType == YRM100X_MODULE) {
-            uint8_t session = 0, target = 0;
-            if(m100_get_query_params(App->YRM100XWorker->module, &session, &target)) {
-                App->SettingSessionIndex = session;
-                App->SettingTargetIndex = target;
-            } else {
-                m100_set_query_params(
-                    App->YRM100XWorker->module,
-                    App->SettingSessionIndex,
-                    App->SettingTargetIndex);
-            }
-        }
-        variable_item_set_current_value_index(App->SessionSelection, App->SettingSessionIndex);
-        variable_item_set_current_value_text(
-            App->SessionSelection, App->SettingSessionNames[App->SettingSessionIndex]);
-        variable_item_set_current_value_index(App->TargetSelection, App->SettingTargetIndex);
-        variable_item_set_current_value_text(
-            App->TargetSelection, App->SettingTargetNames[App->SettingTargetIndex]);
-
     } else {
         if(App->UHFModuleType != YRM100X_MODULE) {
             uart_helper_send(App->UartHelper, "D\n", 2);
         }
         App->ReaderConnected = false;
-        // Lock all items except module and save
         for(size_t i = 0; i < App->num_items; i++) {
             App->item_locks[i].locked = true;
         }
@@ -409,7 +479,6 @@ void uhf_reader_setting_1_change(VariableItem* Item) {
         variable_item_set_current_value_text(App->TargetSelection, "LOCKED");
     }
 
-    //Setting the current setting value for both the read and write screens
     variable_item_set_current_value_text(Item, App->Setting1Names[Index]);
     UHFReaderConfigModel* ModelRead = view_get_model(App->ViewRead);
     ModelRead->Setting1Index = Index;
@@ -420,8 +489,8 @@ void uhf_reader_setting_1_change(VariableItem* Item) {
 }
 
 /**
- * @brief      Handles power level VariableItem changes (0-27 dBm).
- * @param      Item  The VariableItem that was changed.
+ * @brief Handles power level changes. YRM1002 supports 15-26 dBm.
+ * @param Item The VariableItem that was changed.
 */
 void uhf_reader_power_setting_change(VariableItem* Item) {
     UHFReaderApp* App = variable_item_get_context(Item);
@@ -432,6 +501,12 @@ void uhf_reader_power_setting_change(VariableItem* Item) {
         char power_label[8];
         snprintf(power_label, sizeof(power_label), "%ddBm", App->SettingPowerIndex);
         variable_item_set_current_value_text(Item, power_label);
+        return;
+    }
+    if(App->UHFModuleType == YRM100X_MODULE &&
+       (Index < UHF_READER_MIN_POWER_DBM || Index > UHF_READER_MAX_POWER_DBM)) {
+        variable_item_set_current_value_index(Item, App->SettingPowerIndex);
+        show_command_error_notification(App);
         return;
     }
     if(App->UHFModuleType == YRM100X_MODULE) {
@@ -448,6 +523,7 @@ void uhf_reader_power_setting_change(VariableItem* Item) {
     char power_label[8];
     snprintf(power_label, sizeof(power_label), "%ddBm", Index);
     variable_item_set_current_value_text(Item, power_label);
+    if(!uhf_reader_settings_save_current(App)) show_command_error_notification(App);
 }
 
 /**
@@ -457,54 +533,33 @@ void uhf_reader_power_setting_change(VariableItem* Item) {
 */
 void uhf_reader_setting_6_text_updated(void* context) {
     UHFReaderApp* App = (UHFReaderApp*)context;
-    bool Redraw = true;
+    char value[9];
+    snprintf(
+        value,
+        sizeof(value),
+        "%02X%02X%02X%02X",
+        App->ApTempBuffer[0],
+        App->ApTempBuffer[1],
+        App->ApTempBuffer[2],
+        App->ApTempBuffer[3]);
 
-    // Temporary buffer to hold the converted string
-    char* tempBuffer = (char*)malloc(24);
-    snprintf(tempBuffer, 24, "%s", convert_to_hex_string(App->ApTempBuffer, 4));
+    furi_string_set_str(App->DefaultAccessPwdStr, value);
+    memcpy(App->DefaultAccessPassword, value, sizeof(value));
+    with_view_model(
+        App->ViewRead,
+        UHFReaderConfigModel * Model,
+        { furi_string_set_str(Model->SettingReadAp, value); },
+        true);
+    variable_item_set_current_value_text(App->SettingApPwdItem, value);
 
-    if(App->UHFModuleType != YRM100X_MODULE) {
-        //TODO: ADD SUPPORT FOR M6E and M7E
-
-        with_view_model(
-            App->ViewRead,
-            UHFReaderConfigModel * Model,
-            {
-                //Send the set AP command to the RPi Zero
-                uart_helper_send(App->UartHelper, "SETPWD\n", 7);
-
-                //Set the current AP determined by user
-                furi_string_set(Model->SettingReadAp, tempBuffer);
-
-                //Send the AP value to the RPi Zero
-                uart_helper_send_string(App->UartHelper, Model->SettingReadAp);
-
-                //Update the AP value in the configuration screen
-                variable_item_set_current_value_text(
-                    App->SettingApPwdItem, furi_string_get_cstr(Model->SettingReadAp));
-            },
-            Redraw);
-
+    if(App->UHFModuleType == YRM100X_MODULE) {
+        App->YRM100XWorker->DefaultAP = bytes_to_uint32(App->ApTempBuffer, 4);
     } else {
-        with_view_model(
-            App->ViewRead,
-            UHFReaderConfigModel * Model,
-            {
-                //Set the current AP determined by user
-                furi_string_set(Model->SettingReadAp, tempBuffer);
-
-                //Send the AP value to the YRM100X
-                variable_item_set_current_value_text(
-                    App->SettingApPwdItem, furi_string_get_cstr(Model->SettingReadAp));
-            },
-            Redraw);
-
-        if(App->ReaderConnected) {
-            App->YRM100XWorker->DefaultAP = bytes_to_uint32(App->ApTempBuffer, 4);
-        }
+        //TODO: ADD SUPPORT FOR M6E and M7E
+        uart_helper_send(App->UartHelper, "SETPWD\n", 7);
+        uart_helper_send_string(App->UartHelper, App->DefaultAccessPwdStr);
     }
-    free(tempBuffer);
-    //Switch back to the configuration view
+    if(!uhf_reader_settings_save_current(App)) show_command_error_notification(App);
     view_dispatcher_switch_to_view(App->ViewDispatcher, UHFReaderViewConfigure);
 }
 
@@ -567,6 +622,7 @@ void uhf_reader_module_setting_change(VariableItem* Item) {
             App->YRM100XWorker = uhf_worker_alloc();
             UHFTagWrapper* WorkerTagWrapper = uhf_tag_wrapper_alloc();
             App->YRM100XWorker->uhf_tag_wrapper = WorkerTagWrapper;
+            App->YRM100XWorker->DefaultAP = bytes_to_uint32(App->ApTempBuffer, 4);
             m100_disable_write_mask(App->YRM100XWorker->module, WRITE_EPC);
         }
 
@@ -629,6 +685,8 @@ void uhf_reader_save_setting_change(VariableItem* Item) {
     } else {
         App->UHFSaveType = NO_SAVE_ON_WRITE;
     }
+    App->SettingSavingIndex = Index;
+    if(!uhf_reader_settings_save_current(App)) show_command_error_notification(App);
 }
 
 /**
@@ -695,6 +753,7 @@ void uhf_reader_region_setting_change(VariableItem* Item) {
     App->SettingRegionIndex = Index;
     App->UHFRegionType = Index;
     variable_item_set_current_value_text(Item, App->SettingRegionNames[Index]);
+    if(!uhf_reader_settings_save_current(App)) show_command_error_notification(App);
 }
 
 void uhf_reader_session_setting_change(VariableItem* Item) {
@@ -717,6 +776,7 @@ void uhf_reader_session_setting_change(VariableItem* Item) {
     }
     App->SettingSessionIndex = Index;
     variable_item_set_current_value_text(Item, App->SettingSessionNames[Index]);
+    if(!uhf_reader_settings_save_current(App)) show_command_error_notification(App);
 }
 
 void uhf_reader_target_setting_change(VariableItem* Item) {
@@ -739,6 +799,7 @@ void uhf_reader_target_setting_change(VariableItem* Item) {
     }
     App->SettingTargetIndex = Index;
     variable_item_set_current_value_text(Item, App->SettingTargetNames[Index]);
+    if(!uhf_reader_settings_save_current(App)) show_command_error_notification(App);
 }
 
 /**
@@ -771,18 +832,6 @@ void uhf_reader_setting_item_clicked(void* context, uint32_t index) {
         }
         byte_input_set_header_text(App->ApInput, App->AccessPasswordPlaceHolder);
 
-        //Modify the value of the AP for the read and write models
-        bool Redraw = false;
-        with_view_model(
-            App->ViewRead,
-            UHFReaderConfigModel * Model,
-            {
-                strncpy(
-                    convert_to_hex_string(App->ApTempBuffer, 4),
-                    furi_string_get_cstr(Model->SettingReadAp),
-                    App->ApInputBufferSize);
-            },
-            Redraw);
 
         //Setting the AP text input callback function
         byte_input_set_result_callback(
@@ -807,6 +856,10 @@ void view_config_free(UHFReaderApp* App) {
     view_dispatcher_remove_view(App->ViewDispatcher, UHFReaderViewSetReadAp);
     byte_input_free(App->ApInput);
     free(App->ApTempBuffer);
+    furi_string_free(App->DefaultAccessPwdStr);
+    free(App->DefaultAccessPassword);
+    free(App->ReadAccessPasswordLabel);
+    free(App->AccessPasswordPlaceHolder);
     free(App->item_locks);
     view_dispatcher_remove_view(App->ViewDispatcher, UHFReaderViewConfigure);
     variable_item_list_free(App->VariableItemListConfig);
