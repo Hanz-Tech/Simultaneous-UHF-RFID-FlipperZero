@@ -732,6 +732,11 @@ bool uhf_reader_view_read_custom_event_callback(uint32_t event, void* context) {
             App->IsReading = false;
             notification_message(App->Notifications, &uhf_sequence_blink_stop);
             uhf_worker_stop(App->YRM100XWorker);
+            // The worker is stopped, so the wrapper is stable. Restore the success
+            // chirp for either scan mode when the user stops after finding a tag.
+            if(App->YRM100XWorker->uhf_tag_wrapper->tag_count > 0) {
+                notification_message(App->Notifications, &sequence_success);
+            }
             view_dispatcher_send_custom_event(App->ViewDispatcher, UHFCustomEventWorkerExit);
         } else {
             //Check if the reader is connected before sending a read command
